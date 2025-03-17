@@ -1,7 +1,7 @@
 import os
 
 from app.utils.openai_client import get_embeddings_model
-from langchain_chroma import Chroma
+from langchain_community.vectorstores import Chroma
 
 # 保存全局實例以避免多次創建
 _vector_store_instance = None
