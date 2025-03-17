@@ -47,7 +47,6 @@ if os.path.exists("RESET_DB"):
 
 app.mount("/images", StaticFiles(directory="static/images"), name="images")
 
-
 @app.get("/")
 async def root():
     return {"message": "歡迎使用RAG API"}

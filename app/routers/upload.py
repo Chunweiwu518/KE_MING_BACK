@@ -3,12 +3,11 @@ import os
 import shutil
 import time
 import uuid
-from typing import Dict
-
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from typing import Dict, Optional
 
 from app.rag.document import process_document, remove_document
 from app.utils.vector_store import get_vector_store, reset_vector_store
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
 router = APIRouter(prefix="/api", tags=["upload"])
 
@@ -28,9 +27,7 @@ async def upload_file(file: UploadFile = File(...)):
         # 驗證文件類型
         file_extension = os.path.splitext(file.filename)[1].lower()
         if file_extension != ".pdf":
-            raise HTTPException(
-                status_code=400, detail="只支持 PDF 文件，請上傳 PDF 格式的文件"
-            )
+            raise HTTPException(status_code=400, detail="只支持 PDF 文件，請上傳 PDF 格式的文件")
 
         # 創建上傳目錄
         upload_dir = os.path.join(os.getcwd(), "uploads")
@@ -62,7 +59,7 @@ async def upload_file(file: UploadFile = File(...)):
         return {
             "status": "success",
             "filename": file.filename,
-            "message": "文件已上傳並使用 GPT-4o 處理完成",
+            "message": "文件已上傳並使用 GPT-4o 處理完成"
         }
 
     except Exception as e:
@@ -173,7 +170,7 @@ async def clear_vector_store():
 @router.post("/upload/folder")
 async def upload_folder(folder_path: str, use_openai_ocr: bool = False):
     """上傳本地資料夾中的所有支持的文件
-
+    
     Args:
         folder_path: 本地資料夾路徑
         use_openai_ocr: 是否使用 OpenAI Vision API 進行 OCR 處理 PDF
@@ -221,9 +218,7 @@ async def upload_folder(folder_path: str, use_openai_ocr: bool = False):
                     current_use_openai_ocr = False
 
                 # 處理文件
-                success = await process_document(
-                    dest_path, use_openai_ocr=current_use_openai_ocr
-                )
+                success = await process_document(dest_path, use_openai_ocr=current_use_openai_ocr)
 
                 if success:
                     processed_files.append(file_name)
@@ -242,7 +237,7 @@ async def upload_folder(folder_path: str, use_openai_ocr: bool = False):
             "processed_files": processed_files,
             "failed_files": failed_files,
             "message": f"成功處理 {len(processed_files)} 個文件，失敗 {len(failed_files)} 個",
-            "ocr_method": "OpenAI Vision" if use_openai_ocr else "傳統 OCR (僅 PDF)",
+            "ocr_method": "OpenAI Vision" if use_openai_ocr else "傳統 OCR (僅 PDF)"
         }
 
     except Exception as e:
@@ -255,11 +250,11 @@ async def get_vector_store_stats():
     """獲取向量知識庫統計信息和內容"""
     try:
         vector_store = get_vector_store()
-
+        
         # 獲取所有文檔
         results = vector_store.get()
-
-        if not results or not results["documents"]:
+        
+        if not results or not results['documents']:
             return {
                 "status": "success",
                 "message": "向量庫是空的",
@@ -267,35 +262,38 @@ async def get_vector_store_stats():
                 "unique_files": 0,
                 "files": [],
                 "chunks": [],
-                "is_empty": True,
+                "is_empty": True
             }
-
+            
         # 獲取所有文檔內容和元數據
-        documents = results["documents"]
-        metadatas = results["metadatas"]
-
+        documents = results['documents']
+        metadatas = results['metadatas']
+        
         # 整理文件統計
         file_stats = {}
         chunks_content = []
-
+        
         for doc, meta in zip(documents, metadatas):
-            filename = meta.get("filename", "unknown")
+            filename = meta.get('filename', 'unknown')
             if filename not in file_stats:
                 file_stats[filename] = 0
             file_stats[filename] += 1
-
+            
             # 添加chunk內容
-            chunks_content.append({"content": doc, "metadata": meta})
-
+            chunks_content.append({
+                "content": doc,
+                "metadata": meta
+            })
+        
         return {
             "status": "success",
             "total_chunks": len(documents),
             "unique_files": len(file_stats),
             "files": file_stats,
             "chunks": chunks_content,
-            "is_empty": False,
+            "is_empty": False
         }
-
+        
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"獲取統計信息失敗: {str(e)}")
 
@@ -320,6 +318,84 @@ async def hard_reset_vector_store():
         raise HTTPException(status_code=500, detail=f"重置標記失敗: {str(e)}")
 
 
+@router.post("/test/ocr")
+async def test_ocr(file: UploadFile = File(...), page_num: int = 0):
+    """
+    測試 PaddleOCR 的中文識別功能
+    
+    上傳 PDF 文件並使用 PaddleOCR 對指定頁面進行 OCR 處理，但不將結果存入向量數據庫
+    """
+    try:
+        # 驗證文件類型
+        file_extension = os.path.splitext(file.filename)[1].lower()
+        if file_extension != ".pdf":
+            raise HTTPException(status_code=400, detail="只支持 PDF 文件，請上傳 PDF 格式的文件")
+        
+        # 創建臨時目錄用於測試
+        temp_dir = os.path.join(os.getcwd(), "temp")
+        os.makedirs(temp_dir, exist_ok=True)
+        
+        # 生成臨時文件名
+        temp_filename = f"temp_{uuid.uuid4()}.pdf"
+        temp_file_path = os.path.join(temp_dir, temp_filename)
+        
+        try:
+            # 保存文件
+            contents = await file.read()
+            with open(temp_file_path, "wb") as f:
+                f.write(contents)
+            
+            # 導入所需模組
+            from app.utils.paddle_ocr import PaddlePDFProcessor
+            
+            # 創建處理器
+            processor = PaddlePDFProcessor(temp_file_path)
+            
+            # 讀取 PDF，檢查頁數
+            import fitz
+            pdf_document = fitz.open(temp_file_path)
+            total_pages = len(pdf_document)
+            
+            if page_num < 0 or page_num >= total_pages:
+                raise HTTPException(
+                    status_code=400, 
+                    detail=f"頁面編號無效。PDF 共有 {total_pages} 頁，頁碼必須在 0 至 {total_pages-1} 之間"
+                )
+            
+            # 獲取指定頁面
+            page = pdf_document[page_num]
+            
+            # 提取頁面圖像
+            image = processor._extract_page_as_image(page)
+            
+            # 使用 PaddleOCR 進行 OCR 處理
+            ocr_result = processor._ocr_with_paddle(image)
+            
+            # 關閉 PDF
+            pdf_document.close()
+            
+            return {
+                "status": "success",
+                "filename": file.filename,
+                "page": page_num + 1,  # 顯示給用戶的頁碼從 1 開始
+                "total_pages": total_pages,
+                "ocr_result": ocr_result,
+                "ocr_method": "PaddleOCR",
+                "message": "PaddleOCR 測試完成"
+            }
+            
+        finally:
+            # 清理臨時文件
+            if os.path.exists(temp_file_path):
+                os.remove(temp_file_path)
+            
+    except Exception as e:
+        print(f"PaddleOCR 測試時出錯: {str(e)}")
+        import traceback
+        print(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"OCR 測試失敗: {str(e)}")
+
+
 @router.post("/test/gpt-ocr")
 async def test_gpt_ocr(file: UploadFile = File(...)):
     """
@@ -329,47 +405,44 @@ async def test_gpt_ocr(file: UploadFile = File(...)):
         # 驗證文件類型
         file_extension = os.path.splitext(file.filename)[1].lower()
         if file_extension != ".pdf":
-            raise HTTPException(
-                status_code=400, detail="只支持 PDF 文件，請上傳 PDF 格式的文件"
-            )
-
+            raise HTTPException(status_code=400, detail="只支持 PDF 文件，請上傳 PDF 格式的文件")
+        
         # 創建臨時目錄用於測試
         temp_dir = os.path.join(os.getcwd(), "temp")
         os.makedirs(temp_dir, exist_ok=True)
-
+        
         # 生成臨時文件名
         temp_filename = f"temp_{uuid.uuid4()}.pdf"
         temp_file_path = os.path.join(temp_dir, temp_filename)
-
+        
         try:
             # 保存文件
             contents = await file.read()
             with open(temp_file_path, "wb") as f:
                 f.write(contents)
-
+            
             # 導入所需模組
             from app.utils.gpt_processor import GPTDocumentProcessor
-
+            
             # 創建處理器並處理
             processor = GPTDocumentProcessor(temp_file_path)
             documents = processor.process()
-
+            
             return {
                 "status": "success",
                 "filename": file.filename,
                 "content": documents[0].page_content if documents else "",
                 "extraction_method": "gpt4o",
-                "message": "GPT-4o 處理完成",
+                "message": "GPT-4o 處理完成"
             }
-
+            
         finally:
             # 清理臨時文件
             if os.path.exists(temp_file_path):
                 os.remove(temp_file_path)
-
+            
     except Exception as e:
         print(f"GPT-4o 處理時出錯: {str(e)}")
         import traceback
-
         print(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"處理失敗: {str(e)}")

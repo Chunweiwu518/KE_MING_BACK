@@ -1,13 +1,12 @@
 import os
 import re
-from typing import Any, Dict, List
-
-from langchain.chains import RetrievalQA
-from langchain.prompts import PromptTemplate
-from langchain.schema import Document
-from langchain_openai import ChatOpenAI
+import json
+from typing import Any, Dict, List, Optional
 
 from app.utils.vector_store import get_vector_store
+from langchain.prompts import PromptTemplate
+from langchain_openai import ChatOpenAI
+from langchain.schema import Document
 
 
 class RAGEngine:
@@ -29,7 +28,7 @@ class RAGEngine:
             """,
             input_variables=["context", "question"],
         )
-
+        
         # 新增產品相關問題的專用提示
         self.product_qa_prompt = PromptTemplate(
             template="""你是一個產品信息專家。請使用以下上下文回答關於產品的問題。
@@ -44,22 +43,12 @@ class RAGEngine:
             input_variables=["context", "question"],
         )
 
-        # 修正診斷日誌
-        try:
-            print("向量存儲初始化成功")
-            # 嘗試使用更安全的方式獲取文檔數量
-            retriever = self.vector_store.as_retriever(search_kwargs={"k": 1})
-            print("檢索器初始化成功")
-        except Exception as e:
-            print(f"向量存儲診斷時發生錯誤: {str(e)}")
-
     def setup_retrieval_qa(self, is_product_query=False):
         # 設置檢索問答系統
         retriever = self.vector_store.as_retriever(
-            search_type="similarity",
-            search_kwargs={"k": 12},  # 增加檢索數量
+            search_type="similarity", search_kwargs={"k": 5}
         )
-
+        
         # 根據查詢類型選擇不同的提示模板
         prompt = self.product_qa_prompt if is_product_query else self.qa_prompt
 
@@ -69,7 +58,6 @@ class RAGEngine:
             retriever=retriever,
             return_source_documents=True,
             chain_type_kwargs={"prompt": prompt},
-            verbose=True,  # 添加詳細日誌輸出
         )
 
     async def query(
@@ -77,7 +65,7 @@ class RAGEngine:
     ) -> Dict[str, Any]:
         # 判斷是否是產品查詢
         is_product_query = self.is_product_query(question)
-
+        
         qa = self.setup_retrieval_qa(is_product_query=is_product_query)
         result = await qa.acall({"query": question})
 
@@ -90,81 +78,55 @@ class RAGEngine:
                 sources.append({"content": doc.page_content, "metadata": doc.metadata})
 
         return {"answer": answer, "sources": sources}
-
+    
     def is_product_query(self, query: str) -> bool:
         """判斷是否是產品相關查詢"""
-        # 檢查是否包含產品ID模式 (多種格式)
-        product_id_patterns = [
-            r"[A-Z]{2}-\d{4}",  # HK-2189
-            r"[A-Z]{3}-[A-Z]\d{3}",  # EDS-G616
-            r"[A-Z]{3}-\d{4}[A-Z]",  # 其他可能格式
-            r"[A-Z]{2,4}-?[0-9]{3,4}[A-Z]?",  # 通用模式
-        ]
-
-        for pattern in product_id_patterns:
-            if re.search(pattern, query):
-                print(f"檢測到產品ID查詢：{query}")
-                return True
-
+        # 檢查是否包含產品ID模式 (如HK-2189, TL-4523等)
+        product_id_pattern = r'[A-Z]{2}-\d{4}'
+        if re.search(product_id_pattern, query):
+            return True
+            
         # 檢查是否包含產品相關關鍵詞
-        product_keywords = [
-            "產品",
-            "商品",
-            "規格",
-            "價格",
-            "類別",
-            "工作燈",
-            "頭燈",
-            "詳細資訊",
-            "手電筒",
-            "軟管",
-            "吸磁",
-            "LED",
-        ]
+        product_keywords = ["產品", "商品", "規格", "價格", "類別", "工作燈", "頭燈"]
         for keyword in product_keywords:
             if keyword in query:
                 return True
-
+                
         return False
-
+        
     def get_product_by_id(self, product_id: str):
         """根據產品ID直接檢索相關文檔"""
         # 使用metadata過濾方式優先查詢
         try:
             # 嘗試使用metadata過濾
-            docs = self.vector_store.get(where={"product_id": product_id})
+            docs = self.vector_store.get(
+                where={"product_id": product_id}
+            )
             if docs and len(docs) > 0:
                 # 確保返回的是Document對象
-                if not all(hasattr(doc, "page_content") for doc in docs):
+                if not all(hasattr(doc, 'page_content') for doc in docs):
                     # 如果不是Document對象，轉換它們
                     docs = [
-                        Document(
-                            page_content=doc if isinstance(doc, str) else str(doc),
-                            metadata={
-                                "source": "product_data",
-                                "product_id": product_id,
-                            },
-                        )
+                        Document(page_content=doc if isinstance(doc, str) else str(doc),
+                                 metadata={"source": "product_data", "product_id": product_id})
                         for doc in docs
                     ]
                 return docs
         except Exception as e:
             print(f"使用metadata過濾查詢產品ID時出錯: {str(e)}")
-
+        
         # 如果metadata過濾失敗，使用文本搜索
         docs = self.vector_store.similarity_search(product_id, k=3)
-
+        
         # 確保返回的是Document對象
-        if not all(hasattr(doc, "page_content") for doc in docs):
+        if not all(hasattr(doc, 'page_content') for doc in docs):
             # 如果不是Document對象，轉換它們
             docs = [
-                Document(
-                    page_content=doc if isinstance(doc, str) else str(doc),
-                    metadata={"source": "similarity_search", "product_id": product_id},
-                )
+                Document(page_content=doc if isinstance(doc, str) else str(doc),
+                         metadata={"source": "similarity_search", "product_id": product_id})
                 for doc in docs
             ]
-
+        
         return docs
 
     def process_query(self, query, history=None):
@@ -174,59 +136,69 @@ class RAGEngine:
                 print("重新初始化向量存儲...")
                 self.vector_store = get_vector_store()
                 if not self.vector_store:
-                    return "我沒有找到任何相關信息，可能是因為尚未上傳任何文件。", []
+                    return {
+                        "answer": "我沒有找到任何相關信息，可能是因為尚未上傳任何文件。",
+                        "sources": [],
+                    }
 
-            print(f"處理查詢: '{query}'")
-
-            # 使用更靈活的搜索策略
-            retriever = self.vector_store.as_retriever(
-                search_type="similarity",
-                search_kwargs={
-                    "k": 15,  # 增加檢索數量
-                    "score_threshold": 0.5,  # 添加相似度閾值
-                },
+            # 使用向量搜索找出相關內容
+            results = self.vector_store.similarity_search_with_score(
+                query,
+                k=3
             )
 
-            # 使用 RetrievalQA 進行查詢
-            qa = self.setup_retrieval_qa(is_product_query=self.is_product_query(query))
-            result = qa({"query": query})
-
-            # 提取產品ID或關鍵特徵
-            product_features = []
-            for word in query.split():
-                if any(
-                    keyword in word.lower()
-                    for keyword in ["led", "軟管", "手電筒", "吸磁"]
-                ):
-                    product_features.append(word)
-
-            # 根據產品特徵過濾和組織答案
-            answer = ""
-            if product_features:
-                answer = "### 相關產品資訊\n\n"
-                content_lines = result["result"].split("\n")
-                for line in content_lines:
-                    if any(
-                        feature.lower() in line.lower() for feature in product_features
-                    ):
-                        answer += line + "\n"
-            else:
-                answer = result["result"]
-
-            if not answer.strip():
-                answer = "抱歉，我找不到完全符合描述的產品。請嘗試使用產品型號或更具體的關鍵字搜尋。"
-
-            # 處理來源文件
+            # 整理搜索結果
             sources = []
-            for doc in result["source_documents"]:
-                source_info = {"content": doc.page_content, "metadata": doc.metadata}
-                sources.append(source_info)
+            context = ""
+            for doc, score in results:
+                # 從內容中提取頁碼信息
+                page_info = ""
+                if "(第" in doc.page_content:
+                    # 從內容中提取頁碼
+                    page_matches = re.findall(r'第(\d+)頁', doc.page_content)
+                    if page_matches:
+                        page_info = f"(第 {page_matches[0]} 頁)"
+                
+                source = {
+                    "content": doc.page_content,
+                    "metadata": doc.metadata,
+                    "score": score,
+                    "page_info": page_info
+                }
+                sources.append(source)
+                context += doc.page_content + "\n\n"
 
-            return answer, sources
+            # 如果找到相關內容，使用 GPT-4o 解析
+            if sources:
+                prompt = f"""基於以下產品目錄的內容：
 
+{context}
+
+請回答這個問題：{query}
+
+請提供準確且完整的回答。如果是詢問特定產品，請包含所有相關的產品資訊。"""
+
+                response = self.llm.invoke(prompt)
+                
+                # 從 AIMessage 對象中提取純文本內容
+                answer = response.content if hasattr(response, 'content') else str(response)
+                
+                return {
+                    "answer": answer,  # 現在是純字符串
+                    "sources": sources
+                }
+            else:
+                return {
+                    "answer": "抱歉，我找不到相關的產品資訊。",
+                    "sources": []
+                }
+            
         except Exception as e:
-            print(f"生成回答時出錯: {str(e)}")
-            raise
+            print(f"處理查詢時出錯: {str(e)}")
+            return {
+                "answer": "處理查詢時發生錯誤。",
+                "sources": []
+            }
 
     def generate_response(self, query, docs, is_product_query=False):
         """根據查詢和文檔生成回答與來源"""
@@ -242,7 +214,7 @@ class RAGEngine:
             context_parts = []
             for doc in docs:
                 # 檢查 doc 是否為 Document 對象或字符串
-                if hasattr(doc, "page_content"):
+                if hasattr(doc, 'page_content'):
                     # 是 Document 對象
                     context_parts.append(doc.page_content)
                 elif isinstance(doc, str):
@@ -251,22 +223,19 @@ class RAGEngine:
                 else:
                     # 其他類型
                     context_parts.append(str(doc))
-
+            
             context = "\n\n".join(context_parts)
 
             # 創建提示，根據查詢類型選擇不同的提示模板
-            prompt_template = (
-                self.product_qa_prompt if is_product_query else self.qa_prompt
-            )
+            prompt_template = self.product_qa_prompt if is_product_query else self.qa_prompt
             prompt = prompt_template.format(context=context, question=query)
 
             # 使用LLM生成回答
             messages = [
                 {
                     "role": "system",
-                    "content": "你是一個有幫助的助手，基於給定的上下文回答問題。"
-                    if not is_product_query
-                    else "你是一個產品信息專家，詳細解析產品信息並回答問題。",
+                    "content": "你是一個有幫助的助手，基於給定的上下文回答問題。" if not is_product_query else 
+                              "你是一個產品信息專家，詳細解析產品信息並回答問題。",
                 },
                 {"role": "user", "content": prompt},
             ]
@@ -275,48 +244,33 @@ class RAGEngine:
             response = self.llm.invoke(messages)
             answer = response.content if hasattr(response, "content") else str(response)
 
-            # 處理來源
+            # 處理圖片信息
             sources = []
             for doc in docs:
-                if hasattr(doc, "metadata"):
+                if hasattr(doc, 'metadata'):
                     source_info = {
                         "content": doc.page_content,
                         "source": doc.metadata.get("source", ""),
+                        "images": {}
                     }
+                    
+                    # 解析圖片信息
+                    images_str = doc.metadata.get("images", "{}")
+                    try:
+                        images_dict = json.loads(images_str)
+                        for key, value in images_dict.items():
+                            path, page = value.split("|")
+                            source_info["images"][key] = {
+                                "path": path,
+                                "page": int(page)
+                            }
+                    except json.JSONDecodeError:
+                        print(f"解析圖片信息時出錯: {images_str}")
+                    
                     sources.append(source_info)
-
+            
             return answer, sources
 
         except Exception as e:
             print(f"生成回答時出錯: {str(e)}")
             raise
-
-
-# 搜索配置
-search_kwargs = {
-    "k": 15,  # 檢索文檔數量
-    "score_threshold": 0.5,  # 相似度閾值
-}
-
-# 產品關鍵字
-product_keywords = [
-    "產品",
-    "商品",
-    "規格",
-    "價格",
-    "類別",
-    "工作燈",
-    "頭燈",
-    "詳細資訊",
-    "手電筒",
-    "軟管",
-    "吸磁",
-    "LED",
-]
-
-# 產品ID模式
-product_id_patterns = [
-    r"[A-Z]{2}-\d{4}",  # HK-2189
-    r"[A-Z]{3}-[A-Z]\d{3}",  # EDS-G616
-    r"[A-Z]{3}-\d{4}[A-Z]",  # 其他格式
-]
