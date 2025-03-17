@@ -5,9 +5,10 @@ import time
 import uuid
 from typing import Dict
 
+from fastapi import APIRouter, File, HTTPException, UploadFile
+
 from app.rag.document import process_document, remove_document
 from app.utils.vector_store import get_vector_store, reset_vector_store
-from fastapi import APIRouter, File, HTTPException, UploadFile
 
 router = APIRouter(prefix="/api", tags=["upload"])
 
@@ -20,13 +21,22 @@ file_mappings: Dict[str, str] = {}  # 顯示名稱 -> 實際文件名
 
 @router.post("/upload")
 async def upload_file(file: UploadFile = File(...)):
+    """
+    上傳 PDF 文件並使用 GPT-4o 進行處理
+    """
     try:
+        # 驗證文件類型
+        file_extension = os.path.splitext(file.filename)[1].lower()
+        if file_extension != ".pdf":
+            raise HTTPException(
+                status_code=400, detail="只支持 PDF 文件，請上傳 PDF 格式的文件"
+            )
+
         # 創建上傳目錄
         upload_dir = os.path.join(os.getcwd(), "uploads")
         os.makedirs(upload_dir, exist_ok=True)
 
         # 生成唯一文件名
-        file_extension = os.path.splitext(file.filename)[1]
         new_filename = f"{uuid.uuid4()}{file_extension}"
         file_path = os.path.join(upload_dir, new_filename)
 
@@ -49,12 +59,12 @@ async def upload_file(file: UploadFile = File(...)):
             raise HTTPException(status_code=500, detail="文件處理失敗")
 
         print(f"文件處理完成: {file_path}")
-
         return {
             "status": "success",
-            "filename": file.filename,  # 返回原始文件名
-            "message": "文件已上傳並處理完成",
+            "filename": file.filename,
+            "message": "文件已上傳並使用 GPT-4o 處理完成",
         }
+
     except Exception as e:
         print(f"上傳文件時出錯: {str(e)}")
         raise HTTPException(status_code=500, detail=f"上傳失敗: {str(e)}")
@@ -161,8 +171,13 @@ async def clear_vector_store():
 
 
 @router.post("/upload/folder")
-async def upload_folder(folder_path: str = None):
-    """上傳本地資料夾中的所有支持的文件"""
+async def upload_folder(folder_path: str, use_openai_ocr: bool = False):
+    """上傳本地資料夾中的所有支持的文件
+
+    Args:
+        folder_path: 本地資料夾路徑
+        use_openai_ocr: 是否使用 OpenAI Vision API 進行 OCR 處理 PDF
+    """
     try:
         if not folder_path or not os.path.exists(folder_path):
             raise HTTPException(status_code=400, detail="請提供有效的資料夾路徑")
@@ -198,8 +213,17 @@ async def upload_folder(folder_path: str = None):
                 # 保存文件映射
                 file_mappings[file_name] = new_filename
 
+                # 確定是否使用 OpenAI OCR
+                current_use_openai_ocr = use_openai_ocr
+                # 只對 PDF 文件使用 OpenAI OCR
+                is_pdf = os.path.splitext(file_name)[1].lower() == ".pdf"
+                if current_use_openai_ocr and not is_pdf:
+                    current_use_openai_ocr = False
+
                 # 處理文件
-                success = await process_document(dest_path)
+                success = await process_document(
+                    dest_path, use_openai_ocr=current_use_openai_ocr
+                )
 
                 if success:
                     processed_files.append(file_name)
@@ -218,6 +242,7 @@ async def upload_folder(folder_path: str = None):
             "processed_files": processed_files,
             "failed_files": failed_files,
             "message": f"成功處理 {len(processed_files)} 個文件，失敗 {len(failed_files)} 個",
+            "ocr_method": "OpenAI Vision" if use_openai_ocr else "傳統 OCR (僅 PDF)",
         }
 
     except Exception as e:
@@ -227,55 +252,52 @@ async def upload_folder(folder_path: str = None):
 
 @router.get("/vector-store/stats")
 async def get_vector_store_stats():
-    """獲取向量知識庫統計信息"""
+    """獲取向量知識庫統計信息和內容"""
     try:
-        # 檢查文件系統狀態
-        vector_dir = os.path.join(os.getcwd(), "chroma_new")
-        dir_empty = True
+        vector_store = get_vector_store()
 
-        if os.path.exists(vector_dir):
-            for root, _, files in os.walk(vector_dir):
-                if files and any(not f.startswith(".") for f in files):
-                    dir_empty = False
-                    break
+        # 獲取所有文檔
+        results = vector_store.get()
 
-        # 如果目錄為空，直接返回空狀態
-        if dir_empty:
+        if not results or not results["documents"]:
             return {
                 "status": "success",
                 "message": "向量庫是空的",
                 "total_chunks": 0,
                 "unique_files": 0,
                 "files": [],
+                "chunks": [],
                 "is_empty": True,
             }
 
-        # 否則獲取詳細統計
-        vector_store = get_vector_store(force_new=True)
-        all_docs = vector_store.get()
-        metadatas = all_docs.get("metadatas", [])
+        # 獲取所有文檔內容和元數據
+        documents = results["documents"]
+        metadatas = results["metadatas"]
 
-        unique_files = {
-            meta["filename"] for meta in metadatas if meta and "filename" in meta
-        }
+        # 整理文件統計
+        file_stats = {}
+        chunks_content = []
+
+        for doc, meta in zip(documents, metadatas):
+            filename = meta.get("filename", "unknown")
+            if filename not in file_stats:
+                file_stats[filename] = 0
+            file_stats[filename] += 1
+
+            # 添加chunk內容
+            chunks_content.append({"content": doc, "metadata": meta})
 
         return {
             "status": "success",
-            "total_chunks": len(metadatas),
-            "unique_files": len(unique_files),
-            "files": list(unique_files),
-            "is_empty": len(metadatas) == 0,
+            "total_chunks": len(documents),
+            "unique_files": len(file_stats),
+            "files": file_stats,
+            "chunks": chunks_content,
+            "is_empty": False,
         }
+
     except Exception as e:
-        print(f"獲取統計信息時出錯: {str(e)}")
-        return {
-            "status": "error",
-            "message": str(e),
-            "total_chunks": 0,
-            "unique_files": 0,
-            "files": [],
-            "is_empty": True,
-        }
+        raise HTTPException(status_code=500, detail=f"獲取統計信息失敗: {str(e)}")
 
 
 @router.post("/vector-store/hard-reset")
@@ -296,3 +318,58 @@ async def hard_reset_vector_store():
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"重置標記失敗: {str(e)}")
+
+
+@router.post("/test/gpt-ocr")
+async def test_gpt_ocr(file: UploadFile = File(...)):
+    """
+    測試 GPT-4o 的 PDF 處理功能
+    """
+    try:
+        # 驗證文件類型
+        file_extension = os.path.splitext(file.filename)[1].lower()
+        if file_extension != ".pdf":
+            raise HTTPException(
+                status_code=400, detail="只支持 PDF 文件，請上傳 PDF 格式的文件"
+            )
+
+        # 創建臨時目錄用於測試
+        temp_dir = os.path.join(os.getcwd(), "temp")
+        os.makedirs(temp_dir, exist_ok=True)
+
+        # 生成臨時文件名
+        temp_filename = f"temp_{uuid.uuid4()}.pdf"
+        temp_file_path = os.path.join(temp_dir, temp_filename)
+
+        try:
+            # 保存文件
+            contents = await file.read()
+            with open(temp_file_path, "wb") as f:
+                f.write(contents)
+
+            # 導入所需模組
+            from app.utils.gpt_processor import GPTDocumentProcessor
+
+            # 創建處理器並處理
+            processor = GPTDocumentProcessor(temp_file_path)
+            documents = processor.process()
+
+            return {
+                "status": "success",
+                "filename": file.filename,
+                "content": documents[0].page_content if documents else "",
+                "extraction_method": "gpt4o",
+                "message": "GPT-4o 處理完成",
+            }
+
+        finally:
+            # 清理臨時文件
+            if os.path.exists(temp_file_path):
+                os.remove(temp_file_path)
+
+    except Exception as e:
+        print(f"GPT-4o 處理時出錯: {str(e)}")
+        import traceback
+
+        print(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"處理失敗: {str(e)}")

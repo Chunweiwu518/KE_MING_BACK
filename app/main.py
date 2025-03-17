@@ -4,6 +4,11 @@ import shutil
 from app.routers import chat, history, upload
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+
+# 創建必要的目錄
+static_dir = os.path.join(os.getcwd(), "static", "images", "products")
+os.makedirs(static_dir, exist_ok=True)
 
 app = FastAPI(title="RAG API")
 
@@ -40,6 +45,7 @@ if os.path.exists("RESET_DB"):
     os.remove("RESET_DB")
     print("知識庫重置完成")
 
+app.mount("/images", StaticFiles(directory="static/images"), name="images")
 
 @app.get("/")
 async def root():
