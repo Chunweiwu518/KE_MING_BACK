@@ -1,62 +1,56 @@
-import os
 import json
+import os
+
+from langchain.schema import Document
 
 from app.utils.openai_client import get_embeddings_model
 from app.utils.vector_store import get_vector_store
-from app.utils.gpt_processor import process_pdf_with_gpt
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_community.document_loaders import (
-    Docx2txtLoader,
-    PyPDFLoader,
-    TextLoader,
-    UnstructuredFileLoader,
-)
-from langchain.schema import Document
+
 
 # 添加新的JSON產品數據加載器
 class JSONProductLoader:
     """加載JSON格式的產品數據"""
-    
+
     def __init__(self, file_path):
         self.file_path = file_path
-    
+
     def load(self):
         """加載並處理JSON產品數據"""
         try:
-            with open(self.file_path, 'r', encoding='utf-8') as f:
+            with open(self.file_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            
+
             documents = []
-            
+
             # 處理產品資料
-            if 'products' in data:
-                for product in data['products']:
+            if "products" in data:
+                for product in data["products"]:
                     # 產品基本資訊轉字符串
                     product_info = f"產品ID: {product['id']}\n"
                     product_info += f"產品名稱: {product['name']}\n"
                     product_info += f"產品描述: {product['description']}\n"
                     product_info += f"價格: {product['price']}\n"
                     product_info += f"類別: {product['category']}\n"
-                    
+
                     # 產品規格如果存在
-                    if 'specifications' in product:
+                    if "specifications" in product:
                         product_info += "產品規格:\n"
-                        for spec_key, spec_value in product['specifications'].items():
+                        for spec_key, spec_value in product["specifications"].items():
                             product_info += f"- {spec_key}: {spec_value}\n"
-                    
+
                     # 創建Document對象
                     doc = Document(
                         page_content=product_info,
                         metadata={
                             "source": self.file_path,
                             "filename": os.path.basename(self.file_path),
-                            "product_id": product['id'],
-                            "product_name": product['name'],
-                            "product_category": product['category']
-                        }
+                            "product_id": product["id"],
+                            "product_name": product["name"],
+                            "product_category": product["category"],
+                        },
                     )
                     documents.append(doc)
-            
+
             return documents
         except Exception as e:
             print(f"處理JSON產品數據時出錯: {str(e)}")
@@ -65,10 +59,10 @@ class JSONProductLoader:
 
 async def process_document(file_path: str) -> bool:
     """處理上傳的文件，使用 GPT-4o 進行處理，並存儲到向量數據庫
-    
+
     Args:
         file_path: 文件路徑
-    
+
     Returns:
         處理是否成功
     """
@@ -83,7 +77,7 @@ async def process_document(file_path: str) -> bool:
         # 使用 GPT-4o 處理 PDF
         print("使用 GPT-4o 處理 PDF...")
         documents = process_pdf_with_gpt(file_path)
-        print(f"處理成功，獲取文檔內容")
+        print("處理成功，獲取文檔內容")
 
         # 獲取向量存儲和嵌入模型
         print("初始化向量存儲和嵌入模型...")
@@ -116,6 +110,7 @@ async def process_document(file_path: str) -> bool:
     except Exception as e:
         print(f"處理文件時出錯: {str(e)}")
         import traceback
+
         print(traceback.format_exc())
         return False
 

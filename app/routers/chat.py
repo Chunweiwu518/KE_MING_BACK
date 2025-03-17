@@ -1,9 +1,10 @@
 import traceback
 from typing import Any, Dict, List, Optional
 
-from app.rag.engine import RAGEngine
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+
+from app.rag.engine import RAGEngine
 
 router = APIRouter(prefix="/api", tags=["chat"])
 rag_engine = RAGEngine()
@@ -31,11 +32,15 @@ async def chat(request: Dict[str, Any]):
         # 增加診斷日誌
         print(f"接收到查詢: {query}")
 
-        response = rag_engine.process_query(query, history)
+        # process_query 返回的是 tuple(answer, sources)
+        answer, sources = rag_engine.process_query(query, history)
+
+        # 構建正確的響應格式
+        response = {"answer": answer, "sources": sources}
 
         # 調試輸出
-        print(f"返回答案: {response.get('answer', 'No answer')}")
-        print(f"返回來源數量: {len(response.get('sources', []))}")
+        print(f"返回答案: {answer}")
+        print(f"返回來源數量: {len(sources)}")
 
         return response
     except Exception as e:
