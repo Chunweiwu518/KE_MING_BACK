@@ -2,7 +2,7 @@ import os
 import shutil
 
 from app.utils.openai_client import get_embeddings_model
-from langchain_community.vectorstores import Chroma
+from langchain_chroma import Chroma
 
 # 從環境變數獲取基礎路徑
 BASE_PATH = os.getenv('DATA_PATH', '/app/KE_MING_BACK')
@@ -17,26 +17,22 @@ def get_vector_store(force_new=False):
     global _vector_store_instance
 
     if force_new:
-        reset_vector_store()  # 使用完整的重置函數
+        reset_vector_store()
         _vector_store_instance = None
 
     if _vector_store_instance is None:
         persist_directory = CHROMA_PATH
-        print(f"=== 調試信息 ===")
-        print(f"向量存儲目錄: {persist_directory}")
-        print(f"目錄是否存在: {os.path.exists(persist_directory)}")
-        if os.path.exists(persist_directory):
-            print(f"目錄內容:")
-            for root, dirs, files in os.walk(persist_directory):
-                print(f"  目錄: {root}")
-                print(f"  子目錄: {dirs}")
-                print(f"  文件: {files}")
-        print("==============")
         
+        # 確保目錄存在並設置正確權限
         if not os.path.exists(persist_directory):
             os.makedirs(persist_directory, exist_ok=True)
-            os.chmod(persist_directory, 0o777)
+        os.chmod(persist_directory, 0o777)
         
+        # 確保數據庫文件權限
+        db_path = os.path.join(persist_directory, "chroma.sqlite3")
+        if os.path.exists(db_path):
+            os.chmod(db_path, 0o777)
+            
         embedding_function = get_embeddings_model()
         
         _vector_store_instance = Chroma(
