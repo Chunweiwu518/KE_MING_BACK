@@ -2,7 +2,7 @@ import os
 import shutil
 
 from app.utils.openai_client import get_embeddings_model
-from langchain_community.vectorstores import Chroma
+from langchain_chroma import Chroma
 
 # 從環境變數獲取基礎路徑
 BASE_PATH = os.getenv('DATA_PATH', '/tmp/KE_MING_BACK')
@@ -10,6 +10,22 @@ CHROMA_PATH = os.path.join(BASE_PATH, 'chroma_new')
 
 # 保存全局實例以避免多次創建
 _vector_store_instance = None
+
+
+def ensure_directory_permissions(directory):
+    """確保目錄及其父目錄都有正確的權限"""
+    # 創建所有父目錄
+    os.makedirs(directory, exist_ok=True)
+    
+    # 遍歷目錄樹，設置權限
+    current = directory
+    while current != '/':
+        try:
+            os.chmod(current, 0o777)
+            current = os.path.dirname(current)
+        except Exception as e:
+            print(f"設置目錄權限時出錯 {current}: {str(e)}")
+            break
 
 
 def get_vector_store(force_new=False):
@@ -23,22 +39,24 @@ def get_vector_store(force_new=False):
     if _vector_store_instance is None:
         persist_directory = CHROMA_PATH
         
-        # 確保目錄存在並設置正確權限
-        if not os.path.exists(persist_directory):
-            os.makedirs(persist_directory, exist_ok=True)
-        os.chmod(persist_directory, 0o777)
+        # 確保所有必要的目錄都有正確的權限
+        ensure_directory_permissions(persist_directory)
         
-        # 確保數據庫文件權限
-        db_path = os.path.join(persist_directory, "chroma.sqlite3")
-        if os.path.exists(db_path):
-            os.chmod(db_path, 0o777)
-            
+        # 初始化向量存儲
         embedding_function = get_embeddings_model()
-        
         _vector_store_instance = Chroma(
             persist_directory=persist_directory,
             embedding_function=embedding_function
         )
+        
+        # 確保數據庫文件權限
+        db_path = os.path.join(persist_directory, "chroma.sqlite3")
+        if os.path.exists(db_path):
+            try:
+                os.chmod(db_path, 0o777)
+                print(f"已設置數據庫文件權限: {db_path}")
+            except Exception as e:
+                print(f"設置數據庫文件權限時出錯: {str(e)}")
         
         # 驗證是否為空
         try:
