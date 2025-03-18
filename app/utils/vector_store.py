@@ -5,7 +5,7 @@ from app.utils.openai_client import get_embeddings_model
 from langchain_community.vectorstores import Chroma
 
 # 從環境變數獲取基礎路徑
-BASE_PATH = os.getenv('DATA_PATH', '/app/KE_MING_BACK')
+BASE_PATH = os.getenv('DATA_PATH', '/tmp/KE_MING_BACK')
 CHROMA_PATH = os.path.join(BASE_PATH, 'chroma_new')
 
 # 保存全局實例以避免多次創建
