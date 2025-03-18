@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM python:3.10.5-slim
 
 WORKDIR /app
 
@@ -7,9 +7,12 @@ RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
+# 安裝 uv 包管理器（可選）
+RUN curl -sSf https://install.python-uv.org | python3 -
+
 # 安裝依賴
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN uv pip install --no-cache-dir -r requirements.txt
 
 # 複製應用程序代碼
 COPY . .
