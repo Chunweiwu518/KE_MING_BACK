@@ -88,13 +88,22 @@ async def process_document(file_path: str) -> bool:
         if not os.path.exists(persist_directory):
             os.makedirs(persist_directory, exist_ok=True)
         
-        # 設置目錄權限
-        os.chmod(persist_directory, 0o777)
-        
-        # 確保 SQLite 數據庫文件權限正確
-        db_path = os.path.join(persist_directory, "chroma.sqlite3")
-        if os.path.exists(db_path):
-            os.chmod(db_path, 0o777)
+        # 設置所有相關目錄的權限
+        try:
+            # 設置向量存儲目錄權限
+            os.chmod(persist_directory, 0o777)
+            
+            # 設置父目錄權限
+            parent_dir = os.path.dirname(persist_directory)
+            if os.path.exists(parent_dir):
+                os.chmod(parent_dir, 0o777)
+            
+            # 確保 SQLite 數據庫文件權限正確
+            db_path = os.path.join(persist_directory, "chroma.sqlite3")
+            if os.path.exists(db_path):
+                os.chmod(db_path, 0o777)
+        except Exception as e:
+            print(f"設置權限時出錯（非致命）: {str(e)}")
             
         # 先檢查並刪除相同路徑的舊文檔
         try:
@@ -106,7 +115,15 @@ async def process_document(file_path: str) -> bool:
         # 添加到向量數據庫
         print("將文檔添加到向量數據庫...")
         try:
-            vector_store.add_documents(documents)
+            # 嘗試使用不同的方式添加文檔
+            try:
+                vector_store.add_documents(documents)
+            except Exception as e1:
+                print(f"第一次嘗試添加文檔失敗: {str(e1)}")
+                # 重新初始化向量存儲
+                vector_store = get_vector_store(force_new=True)
+                vector_store.add_documents(documents)
+            
             print("文檔成功添加到向量數據庫!")
             
             # 再次確保數據庫文件權限正確
@@ -117,6 +134,8 @@ async def process_document(file_path: str) -> bool:
         except Exception as e:
             print(f"添加文檔時出錯: {str(e)}")
             try:
+                # 最後一次嘗試
+                vector_store = get_vector_store(force_new=True)
                 vector_store.add_documents(documents, embedding=embedding_model)
                 print("使用替代方法成功添加文檔!")
                 
