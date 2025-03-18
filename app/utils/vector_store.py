@@ -6,8 +6,11 @@ from langchain_chroma import Chroma
 from chromadb.config import Settings
 
 # 從環境變數獲取基礎路徑
-BASE_PATH = os.getenv('DATA_PATH', '/tmp/KE_MING_BACK')
+BASE_PATH = os.getenv('DATA_PATH', '/opt/render/project/src/.render/data')
+print(f"使用向量存儲路徑: {BASE_PATH}")
+
 CHROMA_PATH = os.path.join(BASE_PATH, 'chroma_new')
+print(f"Chroma 數據庫路徑: {CHROMA_PATH}")
 
 # 保存全局實例以避免多次創建
 _vector_store_instance = None
@@ -26,20 +29,26 @@ def get_vector_store(force_new=False):
         
         # 確保目錄存在
         os.makedirs(persist_directory, exist_ok=True)
+        print(f"確保目錄存在: {persist_directory}")
         
         # 設置目錄權限
         try:
             os.chmod(persist_directory, 0o777)
+            print(f"設置目錄權限: {persist_directory}")
             
             # 確保數據庫文件權限
             db_path = os.path.join(persist_directory, "chroma.sqlite3")
             if os.path.exists(db_path):
                 os.chmod(db_path, 0o777)
+                print(f"設置數據庫文件權限: {db_path}")
                 
             # 設置父目錄權限
             parent_dir = os.path.dirname(persist_directory)
-            if os.path.exists(parent_dir):
-                os.chmod(parent_dir, 0o777)
+            if not os.path.exists(parent_dir):
+                os.makedirs(parent_dir, exist_ok=True)
+                print(f"創建父目錄: {parent_dir}")
+            os.chmod(parent_dir, 0o777)
+            print(f"設置父目錄權限: {parent_dir}")
         except Exception as e:
             print(f"設置權限時出錯: {str(e)}")
             
@@ -53,6 +62,7 @@ def get_vector_store(force_new=False):
             persist_directory=persist_directory
         )
         
+        print("初始化 Chroma 向量存儲...")
         _vector_store_instance = Chroma(
             persist_directory=persist_directory,
             embedding_function=embedding_function,
