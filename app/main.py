@@ -60,7 +60,7 @@ async def health_check():
 if __name__ == "__main__":
     import uvicorn
     
-    # 從環境變數獲取 port,預設為 8000
-    port = int(os.getenv("PORT", 8000))
+    # 從環境變數獲取 port,預設為 8080
+    port = int(os.getenv("PORT", 8080))
     
     uvicorn.run("app.main:app", host="0.0.0.0", port=port, reload=True)
