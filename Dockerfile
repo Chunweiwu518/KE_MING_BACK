@@ -8,6 +8,7 @@ RUN apt-get update && apt-get install -y \
     wget \
     build-essential \
     tcl-dev \
+    python3-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # 下載、編譯並安裝最新版本的 SQLite3
@@ -20,6 +21,15 @@ RUN cd /tmp && \
     make install && \
     cd .. && \
     rm -rf sqlite-autoconf-3450200*
+
+# 重建 Python 的 sqlite3 模組
+RUN pip install --upgrade pip && \
+    pip uninstall -y pysqlite3 && \
+    pip install --no-cache-dir pysqlite3-binary && \
+    python -c "import sqlite3; print(f'SQLite3 版本: {sqlite3.sqlite_version}')"
+
+# 設置環境變數以使 Python 使用正確的 SQLite3 庫
+ENV LD_LIBRARY_PATH=/usr/lib:$LD_LIBRARY_PATH
 
 # 安裝依賴
 COPY requirements.txt .
@@ -49,4 +59,5 @@ RUN mkdir -p /app/KE_MING_BACK/chroma_new && \
     chmod 777 /app/KE_MING_BACK/chroma_new/chroma.sqlite3
 
 # 檢查 SQLite 版本
-RUN sqlite3 --version 
+RUN sqlite3 --version && \
+    python -c "import sqlite3; print(f'Python SQLite3 版本: {sqlite3.sqlite_version}')" 
