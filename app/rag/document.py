@@ -84,7 +84,7 @@ async def process_document(file_path: str) -> bool:
         embedding_model = get_embeddings_model()
 
         # 確保向量存儲目錄權限正確
-        persist_directory = os.path.join("/app/KE_MING_BACK", "chroma_new")
+        persist_directory = os.path.join("/tmp/KE_MING_BACK", "chroma_new")
         if not os.path.exists(persist_directory):
             os.makedirs(persist_directory, exist_ok=True)
         

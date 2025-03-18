@@ -9,6 +9,8 @@ from fastapi.staticfiles import StaticFiles
 # 創建必要的目錄
 static_dir = os.path.join(os.getcwd(), "static", "images", "products")
 os.makedirs(static_dir, exist_ok=True)
+# 設置目錄權限
+os.chmod(static_dir, 0o777)
 
 app = FastAPI(title="RAG API")
 
