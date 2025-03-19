@@ -1,7 +1,8 @@
 import os
 from typing import List, Optional, Any
 
-import supabase
+# 修改導入語句以兼容 supabase-py
+from supabase import create_client
 from langchain_core.embeddings import Embeddings
 from langchain_core.documents import Document
 from app.utils.openai_client import get_embeddings_model
@@ -24,7 +25,7 @@ def get_supabase_client():
         if not SUPABASE_URL or not SUPABASE_KEY:
             raise ValueError("請在環境變數中設置 SUPABASE_URL 和 SUPABASE_KEY")
         
-        _supabase_client = supabase.create_client(SUPABASE_URL, SUPABASE_KEY)
+        _supabase_client = create_client(SUPABASE_URL, SUPABASE_KEY)
         print(f"已連接到 Supabase: {SUPABASE_URL}")
     
     return _supabase_client
