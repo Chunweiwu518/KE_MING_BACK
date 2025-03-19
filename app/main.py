@@ -13,15 +13,20 @@ def setup_directories():
     os.makedirs(static_dir, exist_ok=True)
     os.chmod(static_dir, 0o777)
     
-    # 設置向量存儲目錄
-    vector_store_dir = os.path.join("/tmp/KE_MING_BACK", "chroma_new")
-    os.makedirs(vector_store_dir, exist_ok=True)
-    os.chmod(vector_store_dir, 0o777)
+    # 設置向量存儲目錄 - 使用應用根目錄下的持久化目錄
+    render_data_dir = os.path.join(os.getcwd(), ".render", "data")
+    vector_store_dir = os.path.join(render_data_dir, "chroma_new")
     
-    # 設置父目錄權限
-    parent_dir = os.path.dirname(vector_store_dir)
-    if os.path.exists(parent_dir):
-        os.chmod(parent_dir, 0o777)
+    # 確保目錄層次結構存在
+    os.makedirs(render_data_dir, exist_ok=True)
+    os.makedirs(vector_store_dir, exist_ok=True)
+    
+    # 設置目錄權限
+    try:
+        os.chmod(render_data_dir, 0o777)
+        os.chmod(vector_store_dir, 0o777)
+    except Exception as e:
+        print(f"設置向量存儲目錄權限時出錯: {str(e)}")
     
     # 設置上傳目錄
     upload_dir = os.path.join(os.getcwd(), "uploads")
@@ -52,8 +57,9 @@ if os.path.exists("RESET_DB"):
     print("檢測到知識庫重置信號，正在重置...")
     
     # 清空知識庫目錄
+    render_data_dir = os.path.join(os.getcwd(), ".render", "data")
     for db_dir in ["chroma_new", "chroma_db", "vector_db"]:
-        db_path = os.path.join("/tmp/KE_MING_BACK", db_dir)
+        db_path = os.path.join(render_data_dir, db_dir)
         if os.path.exists(db_path):
             try:
                 shutil.rmtree(db_path, ignore_errors=True)

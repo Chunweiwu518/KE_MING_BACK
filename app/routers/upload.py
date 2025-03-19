@@ -141,7 +141,8 @@ async def clear_vector_store():
         reset_vector_store()
 
         # 2. 清除文件
-        vector_dir = os.path.join(os.getcwd(), "chroma_new")
+        render_data_dir = os.path.join(os.getcwd(), ".render", "data")
+        vector_dir = os.path.join(render_data_dir, "chroma_new")
         if os.path.exists(vector_dir):
             # 確保所有文件句柄都已釋放
             time.sleep(1)
@@ -150,6 +151,7 @@ async def clear_vector_store():
                 # 直接使用 shutil.rmtree 清除整個目錄
                 shutil.rmtree(vector_dir, ignore_errors=True)
                 os.makedirs(vector_dir, exist_ok=True)
+                os.chmod(vector_dir, 0o777)
                 print("已清空向量庫目錄")
             except Exception as e:
                 print(f"清除目錄時出錯: {str(e)}")
@@ -165,6 +167,14 @@ async def clear_vector_store():
                             os.rmdir(os.path.join(root, name))
                         except Exception as e:
                             print(f"刪除目錄失敗: {str(e)}")
+
+        # 確保創建目錄並設置權限
+        os.makedirs(vector_dir, exist_ok=True)
+        try:
+            os.chmod(render_data_dir, 0o777)
+            os.chmod(vector_dir, 0o777)
+        except Exception as e:
+            print(f"設置權限時出錯: {str(e)}")
 
         # 3. 清空文件映射
         file_mappings.clear()

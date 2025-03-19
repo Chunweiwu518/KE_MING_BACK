@@ -84,19 +84,16 @@ async def process_document(file_path: str) -> bool:
         embedding_model = get_embeddings_model()
 
         # 確保向量存儲目錄權限正確
-        persist_directory = os.path.join("/tmp/KE_MING_BACK", "chroma_new")
+        render_data_dir = os.path.join(os.getcwd(), ".render", "data")
+        persist_directory = os.path.join(render_data_dir, "chroma_new")
         if not os.path.exists(persist_directory):
             os.makedirs(persist_directory, exist_ok=True)
         
         # 設置所有相關目錄的權限
         try:
             # 設置向量存儲目錄權限
+            os.chmod(render_data_dir, 0o777)
             os.chmod(persist_directory, 0o777)
-            
-            # 設置父目錄權限
-            parent_dir = os.path.dirname(persist_directory)
-            if os.path.exists(parent_dir):
-                os.chmod(parent_dir, 0o777)
             
             # 確保 SQLite 數據庫文件權限正確
             db_path = os.path.join(persist_directory, "chroma.sqlite3")

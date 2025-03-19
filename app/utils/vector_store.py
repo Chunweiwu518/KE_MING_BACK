@@ -6,7 +6,8 @@ from langchain_chroma import Chroma
 from chromadb.config import Settings
 
 # 從環境變數獲取基礎路徑
-BASE_PATH = os.getenv('DATA_PATH', '/tmp/KE_MING_BACK')
+# 使用環境變量或使用Render平台支持寫入的目錄
+BASE_PATH = os.getenv('DATA_PATH', os.path.join(os.getcwd(), '.render', 'data'))
 CHROMA_PATH = os.path.join(BASE_PATH, 'chroma_new')
 
 # 保存全局實例以避免多次創建
