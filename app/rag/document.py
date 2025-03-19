@@ -2,8 +2,7 @@ import os
 import json
 
 from app.utils.openai_client import get_embeddings_model
-# 從 Supabase 向量存儲模塊導入接口
-from app.utils.supabase_vector_store import get_vector_store
+from app.utils.vector_store import get_vector_store
 from app.utils.gpt_processor import process_pdf_with_gpt
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import (
@@ -83,10 +82,32 @@ async def process_document(file_path: str) -> bool:
         print("初始化向量存儲和嵌入模型...")
         vector_store = get_vector_store()
         embedding_model = get_embeddings_model()
+
+        # 確保向量存儲目錄權限正確
+        persist_directory = os.path.join("/tmp/KE_MING_BACK", "chroma_new")
+        if not os.path.exists(persist_directory):
+            os.makedirs(persist_directory, exist_ok=True)
+        
+        # 設置所有相關目錄的權限
+        try:
+            # 設置向量存儲目錄權限
+            os.chmod(persist_directory, 0o777)
+            
+            # 設置父目錄權限
+            parent_dir = os.path.dirname(persist_directory)
+            if os.path.exists(parent_dir):
+                os.chmod(parent_dir, 0o777)
+            
+            # 確保 SQLite 數據庫文件權限正確
+            db_path = os.path.join(persist_directory, "chroma.sqlite3")
+            if os.path.exists(db_path):
+                os.chmod(db_path, 0o777)
+        except Exception as e:
+            print(f"設置權限時出錯（非致命）: {str(e)}")
             
         # 先檢查並刪除相同路徑的舊文檔
         try:
-            vector_store.delete(filter={"source": file_path})
+            vector_store.delete(where={"source": file_path})
             print(f"已刪除文件 {file_path} 的現有向量")
         except Exception as del_e:
             print(f"刪除現有向量時出錯（可能是新文件）: {str(del_e)}")
@@ -94,17 +115,34 @@ async def process_document(file_path: str) -> bool:
         # 添加到向量數據庫
         print("將文檔添加到向量數據庫...")
         try:
-            # 嘗試添加文檔
-            vector_store.add_documents(documents)
+            # 嘗試使用不同的方式添加文檔
+            try:
+                vector_store.add_documents(documents)
+            except Exception as e1:
+                print(f"第一次嘗試添加文檔失敗: {str(e1)}")
+                # 重新初始化向量存儲
+                vector_store = get_vector_store(force_new=True)
+                vector_store.add_documents(documents)
+            
             print("文檔成功添加到向量數據庫!")
+            
+            # 再次確保數據庫文件權限正確
+            if os.path.exists(db_path):
+                os.chmod(db_path, 0o777)
+                
             return True
         except Exception as e:
             print(f"添加文檔時出錯: {str(e)}")
             try:
                 # 最後一次嘗試
                 vector_store = get_vector_store(force_new=True)
-                vector_store.add_documents(documents)
+                vector_store.add_documents(documents, embedding=embedding_model)
                 print("使用替代方法成功添加文檔!")
+                
+                # 確保數據庫文件權限正確
+                if os.path.exists(db_path):
+                    os.chmod(db_path, 0o777)
+                    
                 return True
             except Exception as e2:
                 print(f"替代方法添加文檔失敗: {str(e2)}")
@@ -121,7 +159,7 @@ async def remove_document(file_path: str) -> bool:
     """從向量數據庫中移除文件"""
     try:
         vector_store = get_vector_store()
-        vector_store.delete(filter={"source": file_path})
+        vector_store.delete(where={"source": file_path})
         return True
     except Exception as e:
         print(f"移除文件時出錯: {str(e)}")
