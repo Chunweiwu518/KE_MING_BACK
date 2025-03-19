@@ -5,8 +5,8 @@ from app.utils.openai_client import get_embeddings_model
 from langchain_chroma import Chroma
 from chromadb.config import Settings
 
-# 從環境變數獲取基礎路徑
-BASE_PATH = os.getenv('DATA_PATH', '/opt/render/project/src/.render/data')
+# 使用 Render 的持久化存儲目錄
+BASE_PATH = '/opt/render/project/src/.render/data'
 print(f"使用向量存儲路徑: {BASE_PATH}")
 
 CHROMA_PATH = os.path.join(BASE_PATH, 'chroma_new')
