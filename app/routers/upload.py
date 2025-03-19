@@ -3,7 +3,8 @@ import os
 import shutil
 import time
 import uuid
-from typing import Dict, Optional
+from typing import Dict, Optional, List, Any
+from datetime import datetime
 
 from app.rag.document import process_document, remove_document
 from app.utils.vector_store import get_vector_store, reset_vector_store
@@ -71,23 +72,37 @@ async def upload_file(file: UploadFile = File(...)):
 async def delete_file(filename: str):
     """刪除文件"""
     try:
-        if filename not in file_mappings:
-            raise HTTPException(status_code=404, detail="找不到指定的文件")
-
-        actual_filename = file_mappings[filename]
-        file_path = os.path.join(os.getcwd(), "uploads", actual_filename)
-
-        # 從向量數據庫中移除文件
-        await remove_document(file_path)
-
-        # 刪除實際文件
+        # 首先檢查是否直接在uploads目錄中存在這個文件
+        file_path = os.path.join(os.getcwd(), "uploads", filename)
         if os.path.exists(file_path):
+            # 從向量數據庫中移除文件
+            await remove_document(file_path)
+            # 刪除實際文件
             os.remove(file_path)
-
-        # 移除映射關係
-        del file_mappings[filename]
-
-        return {"status": "success", "message": "文件已刪除"}
+            # 如果在映射中存在，也要移除
+            for display_name, actual_name in list(file_mappings.items()):
+                if actual_name == filename:
+                    del file_mappings[display_name]
+                    break
+            return {"status": "success", "message": "文件已刪除"}
+            
+        # 如果不是直接的UUID文件名，再嘗試從映射中查找
+        if filename in file_mappings:
+            actual_filename = file_mappings[filename]
+            file_path = os.path.join(os.getcwd(), "uploads", actual_filename)
+            
+            # 從向量數據庫中移除文件
+            await remove_document(file_path)
+            
+            # 刪除實際文件
+            if os.path.exists(file_path):
+                os.remove(file_path)
+                
+            # 移除映射關係
+            del file_mappings[filename]
+            return {"status": "success", "message": "文件已刪除"}
+        else:
+            raise HTTPException(status_code=404, detail="找不到指定的文件")
     except HTTPException as he:
         raise he
     except Exception as e:
@@ -446,3 +461,37 @@ async def test_gpt_ocr(file: UploadFile = File(...)):
         import traceback
         print(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"處理失敗: {str(e)}")
+
+
+@router.get("/files", response_model=List[Dict[str, Any]])
+async def get_uploaded_files():
+    """獲取所有已上傳的檔案"""
+    try:
+        files = []
+        for filename in os.listdir(UPLOAD_DIR):
+            # 獲取檔案路徑並確保是檔案而非目錄
+            file_path = os.path.join(UPLOAD_DIR, filename)
+            if os.path.isfile(file_path):
+                # 獲取檔案資訊
+                file_stats = os.stat(file_path)
+                
+                # 檢查文件是否在文件映射中
+                display_name = filename
+                for original_name, mapped_name in file_mappings.items():
+                    if mapped_name == filename:
+                        display_name = original_name
+                        break
+                
+                files.append({
+                    "name": filename,  # 使用UUID格式的實際文件名
+                    "display_name": display_name,  # 原始顯示名稱
+                    "size": file_stats.st_size,
+                    "lastModified": file_stats.st_mtime * 1000,  # 轉換為毫秒時間戳
+                    "uploadTime": datetime.fromtimestamp(file_stats.st_ctime).isoformat()
+                })
+        
+        # 根據修改時間排序，最新的在前面
+        files.sort(key=lambda x: x["lastModified"], reverse=True)
+        return files
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"獲取檔案列表失敗: {str(e)}")

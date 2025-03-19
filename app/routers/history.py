@@ -65,6 +65,8 @@ async def create_chat_history(request: CreateHistoryRequest):
         elif not title:
             title = f"對話 {datetime.now().strftime('%Y-%m-%d %H:%M')}"
 
+        print(f"創建新對話記錄: ID={chat_id}, 標題={title}, 消息數量={len(request.messages)}")
+        
         new_chat = ChatHistory(
             id=chat_id,
             title=title,
@@ -73,8 +75,10 @@ async def create_chat_history(request: CreateHistoryRequest):
         )
 
         chat_histories[chat_id] = new_chat
+        print(f"對話記錄創建成功: {chat_id}")
         return new_chat
     except Exception as e:
+        print(f"創建對話記錄失敗: {str(e)}")
         raise HTTPException(status_code=500, detail=f"創建對話記錄失敗: {str(e)}")
 
 
