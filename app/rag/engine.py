@@ -7,13 +7,14 @@ from app.utils.vector_store import get_vector_store
 from langchain.prompts import PromptTemplate
 from langchain_openai import ChatOpenAI
 from langchain.schema import Document
+from openai import OpenAI
 
 
 class RAGEngine:
     def __init__(self):
         self.vector_store = get_vector_store()
         self.llm = ChatOpenAI(
-            model_name=os.getenv("CHAT_MODEL_NAME", "gpt-3.5-turbo"),
+            model_name=os.getenv("CHAT_MODEL_NAME", "gpt-4o-mini"),
             temperature=0.7,
             openai_api_key=os.getenv("OPENAI_API_KEY"),
         )
@@ -24,7 +25,7 @@ class RAGEngine:
             
             問題: {question}
             
-            如果你找不到答案，請直接說不知道，不要試圖捏造答案。
+            如果你找不到答案，請直接說不知道，不要試圖捏造答案。回答時，只需要基於上下文提供有用的回應，不需要添加額外的解釋。
             """,
             input_variables=["context", "question"],
         )
@@ -129,6 +130,28 @@ class RAGEngine:
         
         return docs
 
+    def generate_product_prompt(self, context, query):
+        """生成針對產品查詢的提示模板"""
+        prompt = f"""
+        以下是產品目錄中的資訊：
+        {context}
+        
+        用戶問題: {query}
+        
+        你是一個專業的產品顧問。根據以上產品目錄資訊，請回應用戶的問題。
+        
+        如果用戶詢問產品列表或種類，請遵循以下指南：
+        1. 將產品按主要類別分組（如工作燈、手電筒、充電器等）
+        2. 提供每個類別下大約有多少種產品
+        3. 每個類別僅列出2-3個代表性產品作為例子
+        4. 告知用戶可以詢問特定類別獲取更多詳情
+        
+        如果用戶詢問特定產品型號，請提供完整詳細資訊。
+        
+        保持回答簡潔有用，字數控制在150字以內。避免使用"根據提供的資訊"等引導語。
+        """
+        return prompt
+
     def process_query(self, query, history=None):
         try:
             # 確保向量存儲已初始化
@@ -144,7 +167,7 @@ class RAGEngine:
             # 使用向量搜索找出相關內容
             results = self.vector_store.similarity_search_with_score(
                 query,
-                k=3
+                k=5  # 增加檢索數量以獲取更多上下文
             )
 
             # 整理搜索結果
@@ -168,28 +191,24 @@ class RAGEngine:
                 sources.append(source)
                 context += doc.page_content + "\n\n"
 
-            # 如果找到相關內容，使用 GPT-4o 解析
+            # 如果找到相關內容，使用 GPT 生成回答
             if sources:
-                prompt = f"""基於以下產品目錄的內容：
-
-{context}
-
-請回答這個問題：{query}
-
-請提供準確且完整的回答。如果是詢問特定產品，請包含所有相關的產品資訊。"""
-
+                # 生成產品查詢專用提示
+                prompt = self.generate_product_prompt(context, query)
+                
+                # 使用 ChatModel 
                 response = self.llm.invoke(prompt)
                 
                 # 從 AIMessage 對象中提取純文本內容
                 answer = response.content if hasattr(response, 'content') else str(response)
                 
                 return {
-                    "answer": answer,  # 現在是純字符串
+                    "answer": answer,
                     "sources": sources
                 }
             else:
                 return {
-                    "answer": "抱歉，我找不到相關的產品資訊。",
+                    "answer": "抱歉，我找不到相關資訊。",
                     "sources": []
                 }
             
@@ -199,6 +218,20 @@ class RAGEngine:
                 "answer": "處理查詢時發生錯誤。",
                 "sources": []
             }
+
+    def is_product_list_query(self, query):
+        """判斷是否是產品列表查詢"""
+        product_list_keywords = [
+            "有哪些產品", "產品列表", "所有產品", 
+            "產品種類", "產品型號", "提供什麼產品",
+            "銷售什麼", "賣什麼", "產品目錄"
+        ]
+        
+        for keyword in product_list_keywords:
+            if keyword in query:
+                return True
+        
+        return False
 
     def generate_response(self, query, docs, is_product_query=False):
         """根據查詢和文檔生成回答與來源"""
@@ -274,3 +307,45 @@ class RAGEngine:
         except Exception as e:
             print(f"生成回答時出錯: {str(e)}")
             raise
+
+    def generate_product_response(self, context, query):
+        """生成產品摘要或推薦的回應"""
+        
+        gpt_params = {
+            'model': os.getenv("CHAT_MODEL_NAME", "gpt-4o-mini"),
+            'max_tokens': 300,
+            'temperature': 0.6,
+            'top_p': 0.7,
+            'frequency_penalty': 0.3,
+        }
+        
+        prompt = f"""
+        以下是產品目錄中的資訊：
+        {context}
+        
+        用戶問題: {query}
+        """
+        
+        messages = [
+            {
+                "role": "system",
+                "content": """你是專業的產品顧問。請遵循以下規則：
+                1. 如果用戶詢問產品列表，按類別分組概述產品，每類僅舉2-3例
+                2. 提供每類產品的大致數量
+                3. 保持回答簡潔，避免冗長列表
+                4. 告知用戶可以詢問特定類別獲取更多詳情
+                5. 如果用戶詢問特定產品型號，則提供詳細資訊""",
+            },
+            {
+                "role": "user",
+                "content": prompt,
+            },
+        ]
+        
+        gpt_params.update({'messages': messages})
+        
+        # 調用 OpenAI
+        client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        response = client.chat.completions.create(**gpt_params)
+        
+        return response.choices[0].message.content
