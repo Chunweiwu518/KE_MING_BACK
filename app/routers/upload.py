@@ -20,9 +20,22 @@ file_mappings: Dict[str, str] = {}  # 顯示名稱 -> 實際文件名
 
 
 @router.post("/upload")
-async def upload_file(file: UploadFile = File(...)):
+async def upload_file(
+    file: UploadFile = File(...), 
+    use_openai_ocr: bool = Form(True),
+    page_by_page: bool = Form(True),  # 默認為逐頁處理
+    batch_size: int = Form(10),  # 默認批次大小為10頁
+    max_pages: int = Form(30)  # 默認最大處理頁數為30頁
+):
     """
     上傳 PDF 文件並使用 GPT-4o 進行處理
+    
+    Args:
+        file: 上傳的PDF文件
+        use_openai_ocr: 是否使用OpenAI Vision API處理PDF
+        page_by_page: 是否逐頁處理PDF
+        batch_size: 每批處理的頁數（僅在page_by_page=False時有效）
+        max_pages: 最大處理頁數（設為0表示處理所有頁面）
     """
     try:
         # 驗證文件類型
@@ -48,7 +61,13 @@ async def upload_file(file: UploadFile = File(...)):
 
         # 處理文件並添加到向量數據庫
         print(f"開始處理文件: {file_path}")
-        success = await process_document(file_path)
+        success = await process_document(
+            file_path, 
+            use_openai_ocr=use_openai_ocr, 
+            page_by_page=page_by_page,
+            batch_size=batch_size,
+            max_pages=max_pages
+        )
 
         if not success:
             # 如果處理失敗，清理文件
@@ -193,12 +212,13 @@ async def clear_vector_store():
 
 
 @router.post("/upload/folder")
-async def upload_folder(folder_path: str, use_openai_ocr: bool = False):
-    """上傳本地資料夾中的所有支持的文件
+async def upload_folder(folder_path: str, use_openai_ocr: bool = True):
+    """
+    上傳本地資料夾中的所有支持的文件
     
     Args:
         folder_path: 本地資料夾路徑
-        use_openai_ocr: 是否使用 OpenAI Vision API 進行 OCR 處理 PDF
+        use_openai_ocr: 是否使用OpenAI Vision API處理PDF，預設為True
     """
     try:
         if not folder_path or not os.path.exists(folder_path):
@@ -424,7 +444,7 @@ async def test_ocr(file: UploadFile = File(...), page_num: int = 0):
 @router.post("/test/gpt-ocr")
 async def test_gpt_ocr(file: UploadFile = File(...)):
     """
-    測試 GPT-4o 的 PDF 處理功能
+    測試 GPT-4o 的 PDF 處理功能 (使用 Vision API)
     """
     try:
         # 驗證文件類型
@@ -447,18 +467,17 @@ async def test_gpt_ocr(file: UploadFile = File(...)):
                 f.write(contents)
             
             # 導入所需模組
-            from app.utils.gpt_processor import GPTDocumentProcessor
+            from app.utils.gpt_processor import process_pdf_with_openai
             
-            # 創建處理器並處理
-            processor = GPTDocumentProcessor(temp_file_path)
-            documents = processor.process()
+            # 直接使用 Vision API 處理
+            documents = process_pdf_with_openai(temp_file_path)
             
             return {
                 "status": "success",
                 "filename": file.filename,
                 "content": documents[0].page_content if documents else "",
-                "extraction_method": "gpt4o",
-                "message": "GPT-4o 處理完成"
+                "extraction_method": "gpt4o-vision",
+                "message": "使用 Vision API 處理完成"
             }
             
         finally:
@@ -467,7 +486,7 @@ async def test_gpt_ocr(file: UploadFile = File(...)):
                 os.remove(temp_file_path)
             
     except Exception as e:
-        print(f"GPT-4o 處理時出錯: {str(e)}")
+        print(f"GPT-4o Vision API 處理時出錯: {str(e)}")
         import traceback
         print(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"處理失敗: {str(e)}")

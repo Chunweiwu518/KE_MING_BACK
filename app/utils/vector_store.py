@@ -14,6 +14,37 @@ CHROMA_PATH = os.path.join(BASE_PATH, 'chroma_new')
 _vector_store_instance = None
 
 
+def limit_k(vs, k):
+    """自適應限制 k 值，避免請求太多超過索引的結果"""
+    try:
+        # 獲取向量存儲中的文檔數量
+        if hasattr(vs, "_collection") and vs._collection is not None:
+            count = vs._collection.count()
+            # 如果請求的 k 大於文檔數量，則返回文檔數量
+            if count < k:
+                print(f"Number of requested results {k} is greater than number of elements in index {count}, updating n_results = {count}")
+                return min(count, max(1, count))  # 至少返回1
+        return k
+    except Exception as e:
+        print(f"限制 k 值時出錯: {str(e)}")
+        return k  # 出錯時返回原始值
+
+
+# 擴展 Chroma 類以增加自適應的 k 限制
+class ChromaWithLimit(Chroma):
+    """增強版的 Chroma 類，添加了 k 值的自適應限制"""
+    
+    def similarity_search(self, query, k=4, **kwargs):
+        """重寫 similarity_search 方法，限制 k 值"""
+        k = limit_k(self, k)
+        return super().similarity_search(query, k=k, **kwargs)
+    
+    def similarity_search_with_score(self, query, k=4, **kwargs):
+        """重寫 similarity_search_with_score 方法，限制 k 值"""
+        k = limit_k(self, k)
+        return super().similarity_search_with_score(query, k=k, **kwargs)
+
+
 def get_vector_store(force_new=False):
     """獲取向量存儲"""
     global _vector_store_instance
@@ -54,7 +85,8 @@ def get_vector_store(force_new=False):
             persist_directory=persist_directory
         )
         
-        _vector_store_instance = Chroma(
+        # 使用增強版的 ChromaWithLimit 類
+        _vector_store_instance = ChromaWithLimit(
             persist_directory=persist_directory,
             embedding_function=embedding_function,
             client_settings=client_settings

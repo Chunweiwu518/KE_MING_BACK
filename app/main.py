@@ -1,6 +1,24 @@
 import os
 import shutil
 
+# ======== 添加 langchain debug 補丁 ========
+# 這是一個修復方案，解決"module 'langchain' has no attribute 'debug'"錯誤
+import importlib
+import logging
+
+# 檢查 langchain 模組
+langchain_module = importlib.import_module('langchain')
+# 如果 langchain 模組中沒有 debug 屬性，添加一個空的 debug 函數
+if not hasattr(langchain_module, 'debug'):
+    def dummy_debug(*args, **kwargs):
+        logging.debug("Called dummy langchain.debug")
+        return None
+    
+    # 將模擬的 debug 函數添加到 langchain 模組
+    setattr(langchain_module, 'debug', dummy_debug)
+    print("全局：已添加模擬的 langchain.debug 函數以避免錯誤")
+# ======== 補丁結束 ========
+
 from app.routers import chat, history, upload
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware

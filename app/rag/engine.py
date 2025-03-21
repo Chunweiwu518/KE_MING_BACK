@@ -3,10 +3,35 @@ import re
 import json
 from typing import Any, Dict, List, Optional
 
+# ======== 添加 langchain debug 與 verbose 補丁 ========
+# 這是一個修復方案，解決"module 'langchain' has no attribute 'debug'"和'verbose'錯誤
+import sys
+import importlib
+import logging
+
+# 檢查 langchain 模組
+langchain_module = importlib.import_module('langchain')
+# 如果 langchain 模組中沒有 debug 屬性，添加一個空的 debug 函數
+if not hasattr(langchain_module, 'debug'):
+    def dummy_debug(*args, **kwargs):
+        logging.debug("Called dummy langchain.debug")
+        return None
+    
+    # 將模擬的 debug 函數添加到 langchain 模組
+    setattr(langchain_module, 'debug', dummy_debug)
+    print("全局：已添加模擬的 langchain.debug 函數以避免錯誤")
+
+# 如果 langchain 模組中沒有 verbose 屬性，添加默認值
+if not hasattr(langchain_module, 'verbose'):
+    # 添加 verbose 屬性並設為 False
+    setattr(langchain_module, 'verbose', False)
+    print("全局：已添加模擬的 langchain.verbose 屬性以避免錯誤")
+# ======== 補丁結束 ========
+
 from app.utils.vector_store import get_vector_store
 from langchain.prompts import PromptTemplate
 from langchain_openai import ChatOpenAI
-from langchain.schema import Document
+from langchain_core.documents import Document
 from openai import OpenAI
 
 
@@ -17,6 +42,7 @@ class RAGEngine:
             model_name=os.getenv("CHAT_MODEL_NAME", "gpt-4o-mini"),
             temperature=0.7,
             openai_api_key=os.getenv("OPENAI_API_KEY"),
+            # 移除 verbose 參數，避免序列化問題
         )
         self.qa_prompt = PromptTemplate(
             template="""你是一個有幫助的AI助手。使用以下上下文來回答問題。
@@ -45,40 +71,28 @@ class RAGEngine:
         )
 
     def setup_retrieval_qa(self, is_product_query=False):
-        # 設置檢索問答系統
-        retriever = self.vector_store.as_retriever(
-            search_type="similarity", search_kwargs={"k": 5}
-        )
+        """
+        注意：此方法已棄用，因為在新版的langchain中可能存在兼容性問題。
+        請使用process_query方法代替。
+        """
+        # 向控制台輸出警告
+        print("警告: setup_retrieval_qa方法已棄用，請使用process_query")
         
-        # 根據查詢類型選擇不同的提示模板
-        prompt = self.product_qa_prompt if is_product_query else self.qa_prompt
-
-        return RetrievalQA.from_chain_type(
-            llm=self.llm,
-            chain_type="stuff",
-            retriever=retriever,
-            return_source_documents=True,
-            chain_type_kwargs={"prompt": prompt},
-        )
+        # 返回None表示此方法不再有效
+        return None
 
     async def query(
         self, question: str, history: List[Dict[str, str]] = None
     ) -> Dict[str, Any]:
-        # 判斷是否是產品查詢
-        is_product_query = self.is_product_query(question)
+        """
+        注意：此方法已棄用，因為在新版的langchain中可能存在兼容性問題。
+        請使用process_query方法代替。
+        """
+        # 向控制台輸出警告
+        print("警告: query方法已棄用，請使用process_query")
         
-        qa = self.setup_retrieval_qa(is_product_query=is_product_query)
-        result = await qa.acall({"query": question})
-
-        answer = result["result"]
-        sources = []
-
-        # 提取來源文件信息
-        if "source_documents" in result:
-            for doc in result["source_documents"]:
-                sources.append({"content": doc.page_content, "metadata": doc.metadata})
-
-        return {"answer": answer, "sources": sources}
+        # 直接調用process_query處理查詢
+        return self.process_query(question, history)
     
     def is_product_query(self, query: str) -> bool:
         """判斷是否是產品相關查詢"""
@@ -165,31 +179,67 @@ class RAGEngine:
                     }
 
             # 使用向量搜索找出相關內容
-            results = self.vector_store.similarity_search_with_score(
-                query,
-                k=5  # 增加檢索數量以獲取更多上下文
-            )
-
-            # 整理搜索結果
             sources = []
             context = ""
-            for doc, score in results:
-                # 從內容中提取頁碼信息
-                page_info = ""
-                if "(第" in doc.page_content:
-                    # 從內容中提取頁碼
-                    page_matches = re.findall(r'第(\d+)頁', doc.page_content)
-                    if page_matches:
-                        page_info = f"(第 {page_matches[0]} 頁)"
+            try:
+                # 嘗試使用 similarity_search_with_score
+                results = self.vector_store.similarity_search_with_score(
+                    query,
+                    k=5  # 增加檢索數量以獲取更多上下文
+                )
                 
-                source = {
-                    "content": doc.page_content,
-                    "metadata": doc.metadata,
-                    "score": score,
-                    "page_info": page_info
-                }
-                sources.append(source)
-                context += doc.page_content + "\n\n"
+                # 整理搜索結果
+                for doc, score in results:
+                    # 從內容中提取頁碼信息
+                    page_info = ""
+                    if "(第" in doc.page_content:
+                        # 從內容中提取頁碼
+                        page_matches = re.findall(r'第(\d+)頁', doc.page_content)
+                        if page_matches:
+                            page_info = f"(第 {page_matches[0]} 頁)"
+                    
+                    source = {
+                        "content": doc.page_content,
+                        "metadata": doc.metadata,
+                        "score": score,
+                        "page_info": page_info
+                    }
+                    sources.append(source)
+                    context += doc.page_content + "\n\n"
+            except Exception as search_error:
+                # 如果 similarity_search_with_score 失敗，嘗試使用 similarity_search
+                print(f"similarity_search_with_score 失敗，嘗試使用替代方法: {str(search_error)}")
+                try:
+                    # 使用不帶得分的搜索方法
+                    docs = self.vector_store.similarity_search(
+                        query,
+                        k=5
+                    )
+                    
+                    # 整理搜索結果
+                    for doc in docs:
+                        # 從內容中提取頁碼信息
+                        page_info = ""
+                        if "(第" in doc.page_content:
+                            # 從內容中提取頁碼
+                            page_matches = re.findall(r'第(\d+)頁', doc.page_content)
+                            if page_matches:
+                                page_info = f"(第 {page_matches[0]} 頁)"
+                        
+                        source = {
+                            "content": doc.page_content,
+                            "metadata": doc.metadata,
+                            "score": 0.0,  # 由於沒有得分，設為默認值
+                            "page_info": page_info
+                        }
+                        sources.append(source)
+                        context += doc.page_content + "\n\n"
+                except Exception as e:
+                    print(f"所有搜索方法均失敗: {str(e)}")
+                    return {
+                        "answer": "抱歉，在搜索相關資訊時遇到技術問題。",
+                        "sources": []
+                    }
 
             # 如果找到相關內容，使用 GPT 生成回答
             if sources:
@@ -214,6 +264,8 @@ class RAGEngine:
             
         except Exception as e:
             print(f"處理查詢時出錯: {str(e)}")
+            traceback_str = __import__('traceback').format_exc()
+            print(f"詳細錯誤信息: {traceback_str}")
             return {
                 "answer": "處理查詢時發生錯誤。",
                 "sources": []
@@ -259,25 +311,17 @@ class RAGEngine:
             
             context = "\n\n".join(context_parts)
 
-            # 創建提示，根據查詢類型選擇不同的提示模板
-            prompt_template = self.product_qa_prompt if is_product_query else self.qa_prompt
-            prompt = prompt_template.format(context=context, question=query)
+            # 使用直接方式生成回答，避免使用可能不兼容的鏈式調用
+            if is_product_query:
+                # 使用 generate_product_response 方法處理產品查詢
+                answer = self.generate_product_response(context, query)
+            else:
+                # 使用一般提示模板
+                prompt = self.qa_prompt.format(context=context, question=query)
+                response = self.llm.invoke(prompt)
+                answer = response.content if hasattr(response, 'content') else str(response)
 
-            # 使用LLM生成回答
-            messages = [
-                {
-                    "role": "system",
-                    "content": "你是一個有幫助的助手，基於給定的上下文回答問題。" if not is_product_query else 
-                              "你是一個產品信息專家，詳細解析產品信息並回答問題。",
-                },
-                {"role": "user", "content": prompt},
-            ]
-
-            # 調用 OpenAI API
-            response = self.llm.invoke(messages)
-            answer = response.content if hasattr(response, "content") else str(response)
-
-            # 處理圖片信息
+            # 處理來源
             sources = []
             for doc in docs:
                 if hasattr(doc, 'metadata'):
@@ -306,7 +350,12 @@ class RAGEngine:
 
         except Exception as e:
             print(f"生成回答時出錯: {str(e)}")
-            raise
+            traceback_str = __import__('traceback').format_exc()
+            print(f"詳細錯誤信息: {traceback_str}")
+            return (
+                "處理您的問題時發生了技術問題，請稍後再試。",
+                []
+            )
 
     def generate_product_response(self, context, query):
         """生成產品摘要或推薦的回應"""
