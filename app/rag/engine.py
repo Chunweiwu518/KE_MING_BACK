@@ -362,7 +362,6 @@ class RAGEngine:
         
         gpt_params = {
             'model': os.getenv("CHAT_MODEL_NAME", "gpt-4o-mini"),
-            'max_tokens': 300,
             'temperature': 0.6,
             'top_p': 0.7,
             'frequency_penalty': 0.3,

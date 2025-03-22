@@ -374,10 +374,10 @@ class GPTDocumentProcessor:
 
 def process_pdf_with_gpt(
     pdf_path: str, 
-    use_vision_api: bool = False, 
+    use_vision_api: bool = True, 
     page_by_page: bool = True,
     batch_size: int = 10,
-    max_pages: int = 30
+    max_pages: int = 0
 ) -> List[Document]:
     """使用 GPT 處理 PDF 文件
     
@@ -400,7 +400,7 @@ def process_pdf_with_gpt(
         # 使用標準處理方式
         return processor.process()
 
-def process_pdf_with_openai(pdf_path, max_pages=30, page_by_page=True, batch_size=10):
+def process_pdf_with_openai(pdf_path, max_pages=0, page_by_page=True, batch_size=10):
     """使用OpenAI Vision API分析PDF內容
     
     Args:

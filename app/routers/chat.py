@@ -22,10 +22,10 @@ class ChatResponse(BaseModel):
 
 
 @router.post("/chat", response_model=ChatResponse)
-async def chat(request: Dict[str, Any]):
+async def chat(request: ChatRequest):
     try:
-        query = request.get("query", "")
-        history = request.get("history", [])
+        query = request.query
+        history = request.history
 
         if not query:
             raise HTTPException(status_code=400, detail="查詢不能為空")
@@ -70,10 +70,10 @@ def preprocess_text(text: str) -> str:
 
 
 @router.post("/chat/stream")
-async def stream_chat(request: Dict[str, Any]):
+async def stream_chat(request: ChatRequest):
     try:
-        query = request.get("query", "")
-        history = request.get("history", [])
+        query = request.query
+        history = request.history
 
         if not query:
             raise HTTPException(status_code=400, detail="查詢不能為空")

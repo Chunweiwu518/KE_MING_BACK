@@ -61,7 +61,11 @@ async def create_chat_history(request: CreateHistoryRequest):
         # 如果沒有提供標題，使用第一條消息的前20個字符
         title = request.title
         if not title and request.messages:
-            title = request.messages[0].content[:20] + "..."
+            first_message = request.messages[0].content.strip()
+            if len(first_message) > 30:
+                title = first_message[:30] + "..."
+            else:
+                title = first_message
         elif not title:
             title = f"對話 {datetime.now().strftime('%Y-%m-%d %H:%M')}"
 

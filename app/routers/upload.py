@@ -25,7 +25,7 @@ async def upload_file(
     use_openai_ocr: bool = Form(True),
     page_by_page: bool = Form(True),  # 默認為逐頁處理
     batch_size: int = Form(10),  # 默認批次大小為10頁
-    max_pages: int = Form(30)  # 默認最大處理頁數為30頁
+    max_pages: int = Form(0)  # 默認不限制處理頁數
 ):
     """
     上傳 PDF 文件並使用 GPT-4o 進行處理
