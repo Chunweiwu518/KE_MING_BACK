@@ -63,7 +63,7 @@ class JSONProductLoader:
             raise
 
 
-async def process_document(file_path: str, use_openai_ocr: bool = False, page_by_page: bool = True, batch_size: int = 10, max_pages: int = 30) -> bool:
+async def process_document(file_path: str, use_openai_ocr: bool = False, page_by_page: bool = True, batch_size: int = 10, max_pages: int = 0) -> bool:
     """處理上傳的文件，使用 GPT-4o 進行處理，並存儲到向量數據庫"""
     try:
         print(f"開始處理文件: {file_path}，使用OCR模式: {use_openai_ocr}，逐頁處理: {page_by_page}，批次大小: {batch_size}，最大頁數: {max_pages}")

@@ -39,34 +39,49 @@ class RAGEngine:
     def __init__(self):
         self.vector_store = get_vector_store()
         self.llm = ChatOpenAI(
-            model_name=os.getenv("CHAT_MODEL_NAME", "gpt-4o-mini"),
+            model_name=os.getenv("CHAT_MODEL_NAME", "gpt-4-1106-preview"),
             temperature=0.7,
             openai_api_key=os.getenv("OPENAI_API_KEY"),
-            # 移除 verbose 參數，避免序列化問題
         )
+        
+        # 優化基本提示詞
         self.qa_prompt = PromptTemplate(
-            template="""你是一個有幫助的AI助手。使用以下上下文來回答問題。
-            
-            上下文: {context}
-            
-            問題: {question}
-            
-            如果你找不到答案，請直接說不知道，不要試圖捏造答案。回答時，只需要基於上下文提供有用的回應，不需要添加額外的解釋。
-            """,
+            template="""你是一個專業的知識庫助手。請使用以下提供的上下文來回答問題。
+
+上下文信息：
+{context}
+
+用戶問題：{question}
+
+回答要求：
+1. 請基於上下文提供準確、相關的信息
+2. 如果上下文中沒有相關信息，請明確說明"我在知識庫中找不到相關信息"
+3. 回答要簡潔明瞭，避免重複信息
+4. 適當引用上下文中的具體內容，增加可信度
+5. 不要添加上下文之外的信息或個人推測
+
+請以專業、客觀的語氣回答：""",
             input_variables=["context", "question"],
         )
         
-        # 新增產品相關問題的專用提示
+        # 優化產品查詢提示詞
         self.product_qa_prompt = PromptTemplate(
-            template="""你是一個產品信息專家。請使用以下上下文回答關於產品的問題。
-            
-            上下文: {context}
-            
-            問題: {question}
-            
-            請盡可能詳細地回答產品相關問題，包括產品名稱、描述、價格、類別和規格等信息。
-            如果找不到特定信息，請明確指出哪些信息是可用的，哪些信息不可用。
-            """,
+            template="""你是一個專業的產品顧問。請使用以下產品信息來回答問題。
+
+產品信息：
+{context}
+
+用戶問題：{question}
+
+回答要求：
+1. 優先提供產品的關鍵信息：型號、規格、特點
+2. 如果是比較類問題，請列出產品間的主要區別
+3. 價格信息要準確，並標註幣種
+4. 規格數據要精確，包含單位
+5. 如有產品優勢，請具體說明
+6. 如果信息不完整，請明確指出缺少哪些信息
+
+請以專業顧問的語氣回答：""",
             input_variables=["context", "question"],
         )
 
@@ -168,7 +183,6 @@ class RAGEngine:
 
     def process_query(self, query, history=None):
         try:
-            # 確保向量存儲已初始化
             if not self.vector_store:
                 print("重新初始化向量存儲...")
                 self.vector_store = get_vector_store()
@@ -178,22 +192,37 @@ class RAGEngine:
                         "sources": [],
                     }
 
-            # 使用向量搜索找出相關內容
+            # 判斷查詢類型
+            is_product = self.is_product_query(query)
+            
+            # 優化檢索策略
             sources = []
             context = ""
+            
             try:
-                # 嘗試使用 similarity_search_with_score
-                results = self.vector_store.similarity_search_with_score(
+                # 1. 首先進行精確匹配搜索
+                exact_matches = self.vector_store.similarity_search_with_score(
                     query,
-                    k=5  # 增加檢索數量以獲取更多上下文
+                    k=3,
+                    score_threshold=0.8  # 設置相似度閾值
                 )
                 
-                # 整理搜索結果
-                for doc, score in results:
-                    # 從內容中提取頁碼信息
+                # 2. 如果精確匹配不足，進行模糊搜索
+                if len(exact_matches) < 3:
+                    fuzzy_matches = self.vector_store.similarity_search_with_score(
+                        query,
+                        k=5-len(exact_matches),
+                        score_threshold=0.5
+                    )
+                    all_matches = exact_matches + fuzzy_matches
+                else:
+                    all_matches = exact_matches
+                
+                # 3. 處理搜索結果
+                for doc, score in all_matches:
+                    # 提取頁碼信息
                     page_info = ""
                     if "(第" in doc.page_content:
-                        # 從內容中提取頁碼
                         page_matches = re.findall(r'第(\d+)頁', doc.page_content)
                         if page_matches:
                             page_info = f"(第 {page_matches[0]} 頁)"
@@ -201,56 +230,36 @@ class RAGEngine:
                     source = {
                         "content": doc.page_content,
                         "metadata": doc.metadata,
-                        "score": score,
+                        "score": float(score),  # 確保分數是浮點數
                         "page_info": page_info
                     }
                     sources.append(source)
-                    context += doc.page_content + "\n\n"
+                    context += f"[相關度: {score:.2f}] " + doc.page_content + "\n\n"
+                
             except Exception as search_error:
-                # 如果 similarity_search_with_score 失敗，嘗試使用 similarity_search
-                print(f"similarity_search_with_score 失敗，嘗試使用替代方法: {str(search_error)}")
-                try:
-                    # 使用不帶得分的搜索方法
-                    docs = self.vector_store.similarity_search(
-                        query,
-                        k=5
-                    )
-                    
-                    # 整理搜索結果
-                    for doc in docs:
-                        # 從內容中提取頁碼信息
-                        page_info = ""
-                        if "(第" in doc.page_content:
-                            # 從內容中提取頁碼
-                            page_matches = re.findall(r'第(\d+)頁', doc.page_content)
-                            if page_matches:
-                                page_info = f"(第 {page_matches[0]} 頁)"
-                        
-                        source = {
-                            "content": doc.page_content,
-                            "metadata": doc.metadata,
-                            "score": 0.0,  # 由於沒有得分，設為默認值
-                            "page_info": page_info
-                        }
-                        sources.append(source)
-                        context += doc.page_content + "\n\n"
-                except Exception as e:
-                    print(f"所有搜索方法均失敗: {str(e)}")
-                    return {
-                        "answer": "抱歉，在搜索相關資訊時遇到技術問題。",
-                        "sources": []
+                print(f"高級搜索失敗，使用基本搜索: {str(search_error)}")
+                docs = self.vector_store.similarity_search(query, k=5)
+                for doc in docs:
+                    source = {
+                        "content": doc.page_content,
+                        "metadata": doc.metadata,
+                        "score": 0.0,
+                        "page_info": ""
                     }
+                    sources.append(source)
+                    context += doc.page_content + "\n\n"
 
-            # 如果找到相關內容，使用 GPT 生成回答
             if sources:
-                # 生成產品查詢專用提示
-                prompt = self.generate_product_prompt(context, query)
+                # 根據查詢類型選擇提示詞
+                prompt = self.product_qa_prompt if is_product else self.qa_prompt
+                prompt_text = prompt.format(context=context, question=query)
                 
-                # 使用 ChatModel 
-                response = self.llm.invoke(prompt)
-                
-                # 從 AIMessage 對象中提取純文本內容
+                # 使用 ChatModel 生成回答
+                response = self.llm.invoke(prompt_text)
                 answer = response.content if hasattr(response, 'content') else str(response)
+                
+                # 按相關度排序來源
+                sources = sorted(sources, key=lambda x: x.get('score', 0), reverse=True)
                 
                 return {
                     "answer": answer,
@@ -258,7 +267,7 @@ class RAGEngine:
                 }
             else:
                 return {
-                    "answer": "抱歉，我找不到相關資訊。",
+                    "answer": "抱歉，我在知識庫中找不到相關信息。請嘗試換個方式提問，或確認問題是否在知識庫範圍內。",
                     "sources": []
                 }
             
@@ -267,7 +276,7 @@ class RAGEngine:
             traceback_str = __import__('traceback').format_exc()
             print(f"詳細錯誤信息: {traceback_str}")
             return {
-                "answer": "處理查詢時發生錯誤。",
+                "answer": "處理您的問題時發生了技術問題，請稍後再試。",
                 "sources": []
             }
 
