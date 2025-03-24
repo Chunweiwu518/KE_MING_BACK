@@ -38,13 +38,21 @@ def limit_k(vs, k):
 class ChromaWithLimit(Chroma):
     """增強版的 Chroma 類，添加了 k 值的自適應限制"""
 
-    def similarity_search(self, query, k=8, **kwargs):
-        """重寫 similarity_search 方法，限制 k 值，默認值從4增加到8"""
+    def similarity_search(self, query, k=4, **kwargs):
+        """執行相似度搜索，自動限制 k 值"""
+        # 移除 score_threshold 參數
+        if "score_threshold" in kwargs:
+            del kwargs["score_threshold"]
+        
         k = limit_k(self, k)
         return super().similarity_search(query, k=k, **kwargs)
 
-    def similarity_search_with_score(self, query, k=8, **kwargs):
-        """重寫 similarity_search_with_score 方法，限制 k 值，默認值從4增加到8"""
+    def similarity_search_with_score(self, query, k=4, **kwargs):
+        """執行帶分數的相似度搜索，自動限制 k 值"""
+        # 移除 score_threshold 參數
+        if "score_threshold" in kwargs:
+            del kwargs["score_threshold"]
+        
         k = limit_k(self, k)
         return super().similarity_search_with_score(query, k=k, **kwargs)
 
@@ -57,17 +65,31 @@ class ChromaWithHybridSearch(ChromaWithLimit):
         實現混合搜索：結合向量相似度和關鍵詞匹配
         alpha: 控制向量相似度vs關鍵詞匹配的權重 (0-1)
         """
-        # 處理關鍵詞匹配結果和向量相似度結果
         try:
             # 向量相似度搜索
             vector_results = self.similarity_search_with_score(query, k=k * 2)
-
-            # 關鍵詞匹配 (使用簡單的詞頻方法)
-            keywords = [
-                w for w in jieba.cut(query) if len(w.strip()) > 1
-            ]  # 使用jieba分詞
-            keyword_scores = {}
-
+            
+            # 關鍵詞匹配 - 使用更多同義詞擴展
+            keywords = [w for w in jieba.cut(query) if len(w.strip()) > 1]
+            
+            # 加入產品型號的特殊處理
+            if any(k for k in query.split() if "-" in k):
+                # 產品型號可能包含連字符，直接添加完整型號作為關鍵詞
+                model_keywords = [k for k in query.split() if "-" in k]
+                keywords.extend(model_keywords)
+            
+            print(f"從查詢中提取的關鍵詞: {keywords}")
+            
+            # 擴展同義詞
+            expanded_keywords = []
+            for keyword in keywords:
+                expanded_keywords.append(keyword)
+                # 添加更多產品相關同義詞
+                # 可以根據您的產品目錄添加更多規則
+            
+            # 降低相似度閾值
+            min_score_threshold = 0.3  # 降低閾值以獲取更多結果
+            
             # 獲取所有文檔
             collection_data = self._collection.get()
             all_docs = collection_data["documents"]
@@ -75,6 +97,7 @@ class ChromaWithHybridSearch(ChromaWithLimit):
             all_metadatas = collection_data["metadatas"]
 
             # 計算關鍵詞匹配分數
+            keyword_scores = {}
             for i, doc in enumerate(all_docs):
                 score = 0
                 for keyword in keywords:
@@ -130,8 +153,7 @@ class ChromaWithHybridSearch(ChromaWithLimit):
 
         except Exception as e:
             print(f"混合搜索出錯: {str(e)}")
-            # 回退到標準向量搜索
-            return self.similarity_search(query, k=k)
+            return []
 
 
 def get_vector_store(force_new=False):

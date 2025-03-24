@@ -42,6 +42,12 @@ async def chat(request: ChatRequest):
 
         # 添加await關鍵字
         response = await rag_engine.process_query(query, history)
+        
+        # 檢查 response 是否為 None
+        if response is None:
+            error_msg = "搜索引擎未能返回結果，可能是因為找不到相關資訊"
+            print(error_msg)
+            return {"answer": error_msg, "sources": []}
 
         # 調試輸出
         print(f"返回答案: {response.get('answer', 'No answer')}")
@@ -120,6 +126,15 @@ async def stream_chat(request: ChatRequest):
             try:
                 # 修改這一行：添加 await 關鍵字來等待異步函數完成
                 response = await rag_engine.process_query(query, formatted_history)
+                
+                # 添加對 None 的檢查
+                if response is None:
+                    error_msg = "搜索引擎未能返回結果，可能是因為找不到相關資訊"
+                    print(error_msg)
+                    yield f"data: [ERROR]{error_msg}[/ERROR]\n\n"
+                    yield "data: [DONE]\n\n"
+                    return
+                    
                 answer = response.get("answer", "")
                 sources = response.get("sources", [])
 
