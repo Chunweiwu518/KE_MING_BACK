@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import re
+import traceback
 from typing import Any, Dict, List
 
 # 檢查 langchain 模組
@@ -186,80 +187,83 @@ class RAGEngine:
         """
         return prompt
 
-    def process_query(
-        self, query: str, history: List[Dict[str, str]] = None
-    ) -> Dict[str, Any]:
+    async def process_query(self, query, history=None):
+        """處理用戶查詢並返回相關資訊和來源"""
         try:
-            # 搜索相關文檔
-            sources = []
-            if self.vector_store is not None:
-                docs = self.vector_store.similarity_search(
-                    query,
-                    k=3,
-                    filter={"type": "product"}
-                    if self.is_product_list_query(query)
-                    else None,
+            # 使用查詢變體增強檢索
+            query_variations = await self.generate_query_variations(
+                query, num_variations=5
+            )  # 增加到5個變體
+            print(f"生成的查詢變體: {query_variations}")
+
+            # 嘗試搜索，首先使用混合搜索
+            if hasattr(self.vector_store, "hybrid_search"):
+                # 增加 alpha 值使關鍵詞匹配更重要
+                results = self.vector_store.hybrid_search(
+                    query=query,
+                    k=10,  # 增加檢索數量
+                    alpha=0.7,  # 提高關鍵詞匹配的權重 (0.5->0.7)
+                )
+                if results:
+                    docs = [r[0] for r in results]
+                else:
+                    docs = []
+            else:
+                docs = []
+
+            # 如果沒有足夠結果，使用變體查詢
+            if len(docs) < 3:
+                print("首次搜索結果不足，嘗試使用查詢變體")
+                all_results = []
+                for variant in query_variations:
+                    variant_results = self.vector_store.similarity_search(
+                        variant,
+                        k=5,
+                    )
+                    all_results.extend(variant_results)
+
+                # 去重
+                seen_contents = set()
+                unique_docs = []
+                for doc in all_results:
+                    if doc.page_content not in seen_contents:
+                        seen_contents.add(doc.page_content)
+                        unique_docs.append(doc)
+
+                docs.extend(
+                    [
+                        doc
+                        for doc in unique_docs
+                        if doc.page_content not in seen_contents
+                    ]
                 )
 
-                # 修改這裡的文檔處理邏輯
-                for doc in docs:  # 直接遍歷文檔，不需要解包
-                    source_info = {
-                        "content": doc.page_content,
-                        "source": doc.metadata.get("source", "未知來源"),
-                        "page": doc.metadata.get("page", None),
-                        "score": doc.metadata.get("score", 0),
-                        "images": {},
-                    }
+            # 如果還是沒有足夠結果，進行關鍵詞回退搜索
+            if len(docs) < 2:
+                print("向量搜索結果不足，使用關鍵詞回退搜索")
+                keyword_docs = self.keyword_fallback_search(
+                    query, max_docs=8
+                )  # 增加到8個文檔
+                # 添加不重複的關鍵詞搜索結果
+                for doc in keyword_docs:
+                    if doc.page_content not in seen_contents:
+                        seen_contents.add(doc.page_content)
+                        docs.append(doc)
 
-                    # 處理圖片信息
-                    images_str = doc.metadata.get("images", "{}")
-                    try:
-                        images_dict = json.loads(images_str)
-                        for key, value in images_dict.items():
-                            path, page = value.split("|")
-                            source_info["images"][key] = {
-                                "path": path,
-                                "page": int(page),
-                            }
-                    except json.JSONDecodeError:
-                        print(f"解析圖片信息時出錯: {images_str}")
-
-                    sources.append(source_info)
-
-                # 如果是產品列表查詢，使用特殊的處理邏輯
-                if self.is_product_list_query(query):
-                    context = "\n".join([doc.page_content for doc in docs])
-                    answer = self.generate_product_response(context, query)
-                else:
-                    # 一般查詢的處理邏輯
-                    context = "\n".join(
-                        [
-                            f"文件：{doc.metadata.get('source', '未知來源')}\n"
-                            f"內容：{doc.page_content}\n"
-                            for doc in docs
-                        ]
-                    )
-
-                    # 使用提示模板生成回答
-                    prompt = self.qa_prompt.format(context=context, question=query)
-
-                    answer = self.llm.invoke(prompt).content
+            # 如果有文檔，使用 LLM 生成回應
+            if docs:
+                # 生成回答與來源
+                answer, sources = self.generate_response(
+                    query, docs, self.is_product_query(query)
+                )
 
                 return {"answer": answer, "sources": sources}
-            else:
-                return {
-                    "answer": "抱歉，知識庫尚未初始化，無法處理您的問題。",
-                    "sources": [],
-                }
 
         except Exception as e:
             print(f"處理查詢時出錯: {str(e)}")
             traceback_str = traceback.format_exc()
             print(f"詳細錯誤信息: {traceback_str}")
-            return {
-                "answer": "處理您的問題時發生了技術問題，請稍後再試。",
-                "sources": [],
-            }
+            return {"answer": f"處理您的問題時發生了技術問題: {str(e)}", "sources": []}
 
     def is_product_list_query(self, query):
         """判斷是否是產品列表查詢"""
@@ -348,7 +352,7 @@ class RAGEngine:
 
         except Exception as e:
             print(f"生成回答時出錯: {str(e)}")
-            traceback_str = __import__("traceback").format_exc()
+            traceback_str = traceback.format_exc()
             print(f"詳細錯誤信息: {traceback_str}")
             return ("處理您的問題時發生了技術問題，請稍後再試。", [])
 
@@ -392,3 +396,91 @@ class RAGEngine:
         response = client.chat.completions.create(**gpt_params)
 
         return response.choices[0].message.content
+
+    async def generate_query_variations(self, query, num_variations=3):
+        """生成查詢的多個變體以提高召回率"""
+        try:
+            prompt = f"""
+            原始查詢: {query}
+            
+            請提供{num_variations}個語義相同但措辭不同的查詢變體，以幫助更好地搜索相關信息。
+            針對以下幾種情況擴展原始查詢:
+            1. 使用同義詞替換關鍵詞
+            2. 如果查詢中涉及產品，嘗試使用更專業的產品描述方式
+            3. 如果查詢是關於圖片或視覺信息，明確提及「圖片」、「圖表」等詞彙
+            4. 如果查詢較短，適當擴展查詢上下文
+            5. 重新排列查詢中的詞組順序
+            
+            僅返回變體列表，每行一個。
+            """
+
+            # 使用OpenAI生成變體
+            client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+            response = client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                temperature=0.7,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "你是一個幫助重新表述查詢的助手，需要專注於同義詞替換和重新表述。",
+                    },
+                    {"role": "user", "content": prompt},
+                ],
+            )
+
+            # 解析回應
+            variations_text = response.choices[0].message.content
+            variations = [
+                line.strip() for line in variations_text.split("\n") if line.strip()
+            ]
+
+            # 添加原始查詢
+            variations = [query] + variations
+
+            # 針對特定類型查詢的進一步處理
+            if "圖" in query or "照片" in query or "顯示" in query:
+                variations.append(f"請顯示{query}的相關圖片或示意圖")
+                variations.append(f"展示關於{query}的圖形或照片資料")
+
+            return variations
+        except Exception as e:
+            print(f"生成查詢變體時出錯: {str(e)}")
+            return [query]  # 出錯時返回原始查詢
+
+    def keyword_fallback_search(self, query, max_docs=5):
+        """使用簡單的關鍵詞匹配作為向量搜索的回退方法"""
+        try:
+            # 使用jieba分詞提取關鍵詞
+            import jieba
+
+            keywords = [w for w in jieba.cut(query) if len(w.strip()) > 1]
+
+            # 獲取所有文檔
+            all_docs = []
+            collection = self.vector_store._collection
+            collection_data = collection.get()
+
+            # 構建結果
+            results = []
+            for i, content in enumerate(collection_data["documents"]):
+                score = 0
+                for keyword in keywords:
+                    if keyword in content:
+                        score += 1
+
+                if score > 0:
+                    metadata = (
+                        collection_data["metadatas"][i]
+                        if collection_data["metadatas"]
+                        else {}
+                    )
+                    results.append(
+                        (Document(page_content=content, metadata=metadata), score)
+                    )
+
+            # 排序並返回前N個結果
+            results.sort(key=lambda x: x[1], reverse=True)
+            return [doc for doc, _ in results[:max_docs]]
+        except Exception as e:
+            print(f"關鍵詞回退搜索出錯: {str(e)}")
+            return []

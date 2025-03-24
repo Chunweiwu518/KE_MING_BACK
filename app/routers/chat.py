@@ -40,7 +40,8 @@ async def chat(request: ChatRequest):
         # 增加診斷日誌
         print(f"接收到查詢: {query}")
 
-        response = rag_engine.process_query(query, history)
+        # 添加await關鍵字
+        response = await rag_engine.process_query(query, history)
 
         # 調試輸出
         print(f"返回答案: {response.get('answer', 'No answer')}")
@@ -117,8 +118,8 @@ async def stream_chat(request: ChatRequest):
         # 定義異步生成器函數來逐字輸出回應
         async def generate_response():
             try:
-                # 獲取完整回應
-                response = rag_engine.process_query(query, formatted_history)
+                # 修改這一行：添加 await 關鍵字來等待異步函數完成
+                response = await rag_engine.process_query(query, formatted_history)
                 answer = response.get("answer", "")
                 sources = response.get("sources", [])
 

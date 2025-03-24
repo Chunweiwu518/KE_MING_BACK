@@ -11,30 +11,4 @@
 
 .animate-fade-in {
   animation: fadeIn 0.3s ease-out forwards;
-}
-
-.prose {
-  font-size: 0.95rem;
-  line-height: 1.6;
-}
-
-.prose strong {
-  font-weight: 600;
-}
-
-.prose ul {
-  margin-top: 0.5em;
-  margin-bottom: 0.5em;
-}
-
-.prose li {
-  margin-top: 0.25em;
-  margin-bottom: 0.25em;
-}
-
-.product-info ul {
-  background: white;
-  border-radius: 0.5rem;
-  padding: 1rem;
-  margin: 0.5rem 0;
 } 
