@@ -186,75 +186,96 @@ class RAGEngine:
         """
         return prompt
 
-    def process_query(
-        self, query: str, history: List[Dict[str, str]] = None
-    ) -> Dict[str, Any]:
+    def process_query(self, query, history=None):
         try:
-            # 搜索相關文檔
-            sources = []
-            if self.vector_store is not None:
-                docs = self.vector_store.similarity_search(
-                    query,
-                    k=3,
-                    filter={"type": "product"}
-                    if self.is_product_list_query(query)
-                    else None,
-                )
-
-                # 修改這裡的文檔處理邏輯
-                for doc in docs:  # 直接遍歷文檔，不需要解包
-                    source_info = {
-                        "content": doc.page_content,
-                        "source": doc.metadata.get("source", "未知來源"),
-                        "page": doc.metadata.get("page", None),
-                        "score": doc.metadata.get("score", 0),
-                        "images": {},
+            if not self.vector_store:
+                print("重新初始化向量存儲...")
+                self.vector_store = get_vector_store()
+                if not self.vector_store:
+                    return {
+                        "answer": "我沒有找到任何相關信息，可能是因為尚未上傳任何文件。",
+                        "sources": [],
                     }
 
-                    # 處理圖片信息
-                    images_str = doc.metadata.get("images", "{}")
-                    try:
-                        images_dict = json.loads(images_str)
-                        for key, value in images_dict.items():
-                            path, page = value.split("|")
-                            source_info["images"][key] = {
-                                "path": path,
-                                "page": int(page),
-                            }
-                    except json.JSONDecodeError:
-                        print(f"解析圖片信息時出錯: {images_str}")
+            # 判斷查詢類型
+            is_product = self.is_product_query(query)
 
-                    sources.append(source_info)
+            # 優化檢索策略
+            sources = []
+            context = ""
 
-                # 如果是產品列表查詢，使用特殊的處理邏輯
-                if self.is_product_list_query(query):
-                    context = "\n".join([doc.page_content for doc in docs])
-                    answer = self.generate_product_response(context, query)
-                else:
-                    # 一般查詢的處理邏輯
-                    context = "\n".join(
-                        [
-                            f"文件：{doc.metadata.get('source', '未知來源')}\n"
-                            f"內容：{doc.page_content}\n"
-                            for doc in docs
-                        ]
+            try:
+                # 1. 首先進行精確匹配搜索
+                exact_matches = self.vector_store.similarity_search_with_score(
+                    query,
+                    k=3,
+                    score_threshold=0.8,  # 設置相似度閾值
+                )
+
+                # 2. 如果精確匹配不足，進行模糊搜索
+                if len(exact_matches) < 3:
+                    fuzzy_matches = self.vector_store.similarity_search_with_score(
+                        query, k=5 - len(exact_matches), score_threshold=0.5
                     )
+                    all_matches = exact_matches + fuzzy_matches
+                else:
+                    all_matches = exact_matches
 
-                    # 使用提示模板生成回答
-                    prompt = self.qa_prompt.format(context=context, question=query)
+                # 3. 處理搜索結果
+                for doc, score in all_matches:
+                    # 提取頁碼信息
+                    page_info = ""
+                    if "(第" in doc.page_content:
+                        page_matches = re.findall(r"第(\d+)頁", doc.page_content)
+                        if page_matches:
+                            page_info = f"(第 {page_matches[0]} 頁)"
 
-                    answer = self.llm.invoke(prompt).content
+                    source = {
+                        "content": doc.page_content,
+                        "metadata": doc.metadata,
+                        "score": float(score),  # 確保分數是浮點數
+                        "page_info": page_info,
+                    }
+                    sources.append(source)
+                    context += f"[相關度: {score:.2f}] " + doc.page_content + "\n\n"
+
+            except Exception as search_error:
+                print(f"高級搜索失敗，使用基本搜索: {str(search_error)}")
+                docs = self.vector_store.similarity_search(query, k=5)
+                for doc in docs:
+                    source = {
+                        "content": doc.page_content,
+                        "metadata": doc.metadata,
+                        "score": 0.0,
+                        "page_info": "",
+                    }
+                    sources.append(source)
+                    context += doc.page_content + "\n\n"
+
+            if sources:
+                # 根據查詢類型選擇提示詞
+                prompt = self.product_qa_prompt if is_product else self.qa_prompt
+                prompt_text = prompt.format(context=context, question=query)
+
+                # 使用 ChatModel 生成回答
+                response = self.llm.invoke(prompt_text)
+                answer = (
+                    response.content if hasattr(response, "content") else str(response)
+                )
+
+                # 按相關度排序來源
+                sources = sorted(sources, key=lambda x: x.get("score", 0), reverse=True)
 
                 return {"answer": answer, "sources": sources}
             else:
                 return {
-                    "answer": "抱歉，知識庫尚未初始化，無法處理您的問題。",
+                    "answer": "抱歉，我在知識庫中找不到相關信息。請嘗試換個方式提問，或確認問題是否在知識庫範圍內。",
                     "sources": [],
                 }
 
         except Exception as e:
             print(f"處理查詢時出錯: {str(e)}")
-            traceback_str = traceback.format_exc()
+            traceback_str = __import__("traceback").format_exc()
             print(f"詳細錯誤信息: {traceback_str}")
             return {
                 "answer": "處理您的問題時發生了技術問題，請稍後再試。",

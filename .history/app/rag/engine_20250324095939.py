@@ -187,79 +187,130 @@ class RAGEngine:
         return prompt
 
     def process_query(
-        self, query: str, history: List[Dict[str, str]] = None
+        self, query: str, history: List[Dict[str, Any]] = None, context: str = ""
     ) -> Dict[str, Any]:
         try:
-            # 搜索相關文檔
-            sources = []
-            if self.vector_store is not None:
-                docs = self.vector_store.similarity_search(
-                    query,
-                    k=3,
-                    filter={"type": "product"}
-                    if self.is_product_list_query(query)
-                    else None,
-                )
-
-                # 修改這裡的文檔處理邏輯
-                for doc in docs:  # 直接遍歷文檔，不需要解包
-                    source_info = {
-                        "content": doc.page_content,
-                        "source": doc.metadata.get("source", "未知來源"),
-                        "page": doc.metadata.get("page", None),
-                        "score": doc.metadata.get("score", 0),
-                        "images": {},
+            # 初始化向量存儲
+            if not self.vector_store:
+                print("重新初始化向量存儲...")
+                self.vector_store = get_vector_store()
+                if not self.vector_store:
+                    return {
+                        "answer": "我沒有找到任何相關信息，可能是因為尚未上傳任何文件。",
+                        "sources": [],
                     }
 
-                    # 處理圖片信息
-                    images_str = doc.metadata.get("images", "{}")
-                    try:
-                        images_dict = json.loads(images_str)
-                        for key, value in images_dict.items():
-                            path, page = value.split("|")
-                            source_info["images"][key] = {
-                                "path": path,
-                                "page": int(page),
-                            }
-                    except json.JSONDecodeError:
-                        print(f"解析圖片信息時出錯: {images_str}")
+            # 使用混合檢索策略
+            sources = []
+            contexts = []
 
-                    sources.append(source_info)
+            # 1. 精確匹配搜索
+            exact_matches = self.vector_store.similarity_search_with_score(
+                query,
+                k=3,
+                score_threshold=0.8,  # 高相似度閾值
+            )
 
-                # 如果是產品列表查詢，使用特殊的處理邏輯
-                if self.is_product_list_query(query):
-                    context = "\n".join([doc.page_content for doc in docs])
-                    answer = self.generate_product_response(context, query)
-                else:
-                    # 一般查詢的處理邏輯
-                    context = "\n".join(
-                        [
-                            f"文件：{doc.metadata.get('source', '未知來源')}\n"
-                            f"內容：{doc.page_content}\n"
-                            for doc in docs
-                        ]
+            # 2. 如果有歷史對話，提取關鍵詞增強搜索
+            if history and len(history) > 0:
+                # 從歷史中提取關鍵詞
+                last_qa = history[-1] if history else None
+                if last_qa and last_qa.get("role") == "user":
+                    enhanced_query = f"{query} {last_qa.get('content', '')}"
+                    context_matches = self.vector_store.similarity_search_with_score(
+                        enhanced_query, k=2, score_threshold=0.6
+                    )
+                    exact_matches.extend(context_matches)
+
+            # 3. 如果結果太少，進行模糊搜索
+            if len(exact_matches) < 3:
+                fuzzy_matches = self.vector_store.similarity_search_with_score(
+                    query, k=3 - len(exact_matches), score_threshold=0.5
+                )
+                exact_matches.extend(fuzzy_matches)
+
+            # 處理搜索結果
+            for doc, score in exact_matches:
+                if doc.page_content.strip():
+                    contexts.append(doc.page_content)
+                    sources.append(
+                        {
+                            "content": doc.page_content,
+                            "metadata": {
+                                "source": doc.metadata.get("source", "未知來源"),
+                                "page": doc.metadata.get("page", None),
+                                "score": float(score),
+                            },
+                        }
                     )
 
-                    # 使用提示模板生成回答
-                    prompt = self.qa_prompt.format(context=context, question=query)
+            # 生成提示詞
+            if history and len(history) > 0:
+                # 將歷史對話整合到提示詞中
+                conversation_context = "\n".join(
+                    [
+                        f"{'用戶' if msg['role'] == 'user' else 'AI助手'}: {msg['content']}"
+                        for msg in history[-2:]  # 使用最近的一輪對話
+                    ]
+                )
+                prompt = f"""基於以下對話歷史和相關文檔回答問題：
 
-                    answer = self.llm.invoke(prompt).content
+對話歷史：
+{conversation_context}
 
-                return {"answer": answer, "sources": sources}
+相關文檔：
+{chr(10).join(contexts)}
+
+當前問題：{query}
+
+請提供準確、相關的回答，並確保回答與之前的對話保持連貫。如果需要參考之前的對話內容，請自然地引用它。
+"""
             else:
-                return {
-                    "answer": "抱歉，知識庫尚未初始化，無法處理您的問題。",
-                    "sources": [],
-                }
+                # 沒有歷史對話時的基本提示詞
+                prompt = f"""基於以下相關文檔回答問題：
+
+相關文檔：
+{chr(10).join(contexts)}
+
+問題：{query}
+
+請提供準確、相關的回答。
+"""
+
+            # 生成回答
+            response = self.llm.invoke(prompt)
+            answer = response.content if hasattr(response, "content") else str(response)
+
+            return {
+                "answer": answer,
+                "sources": sorted(
+                    sources, key=lambda x: x["metadata"].get("score", 0), reverse=True
+                ),
+            }
 
         except Exception as e:
             print(f"處理查詢時出錯: {str(e)}")
-            traceback_str = traceback.format_exc()
-            print(f"詳細錯誤信息: {traceback_str}")
+            import traceback
+
+            traceback.print_exc()
             return {
                 "answer": "處理您的問題時發生了技術問題，請稍後再試。",
                 "sources": [],
             }
+
+    def generate_search_query(self, query: str, context: str) -> str:
+        """根據用戶查詢和上下文生成更好的搜索查詢"""
+        if not context:
+            return query
+
+        # 從上下文中提取關鍵信息
+        key_info = re.findall(r"型號：(.*?)|商品名稱：(.*?)|產品：(.*?)[\n\.]", context)
+        key_info = [k for sublist in key_info for k in sublist if k]
+
+        # 組合查詢
+        if key_info:
+            return f"{query} {' '.join(key_info)}"
+        return query
 
     def is_product_list_query(self, query):
         """判斷是否是產品列表查詢"""

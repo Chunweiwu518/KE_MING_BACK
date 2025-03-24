@@ -190,6 +190,22 @@ class RAGEngine:
         self, query: str, history: List[Dict[str, str]] = None
     ) -> Dict[str, Any]:
         try:
+            # 處理歷史記錄
+            conversation_history = ""
+            if history:
+                for msg in history[-3:]:  # 只取最近的3條記錄
+                    role = msg.get("role", "")
+                    content = msg.get("content", "")
+                    if role and content:
+                        conversation_history += f"{role}: {content}\n"
+
+            # 將歷史記錄添加到提示詞中
+            context = (
+                f"Previous conversation:\n{conversation_history}\n"
+                if conversation_history
+                else ""
+            )
+
             # 搜索相關文檔
             sources = []
             if self.vector_store is not None:
@@ -201,60 +217,52 @@ class RAGEngine:
                     else None,
                 )
 
-                # 修改這裡的文檔處理邏輯
-                for doc in docs:  # 直接遍歷文檔，不需要解包
-                    source_info = {
+                # 3. 處理搜索結果
+                for doc, score in docs:
+                    # 提取頁碼信息
+                    page_info = ""
+                    if "(第" in doc.page_content:
+                        page_matches = re.findall(r"第(\d+)頁", doc.page_content)
+                        if page_matches:
+                            page_info = f"(第 {page_matches[0]} 頁)"
+
+                    source = {
                         "content": doc.page_content,
-                        "source": doc.metadata.get("source", "未知來源"),
-                        "page": doc.metadata.get("page", None),
-                        "score": doc.metadata.get("score", 0),
-                        "images": {},
+                        "metadata": doc.metadata,
+                        "score": float(score),  # 確保分數是浮點數
+                        "page_info": page_info,
                     }
+                    sources.append(source)
+                    context += f"[相關度: {score:.2f}] " + doc.page_content + "\n\n"
 
-                    # 處理圖片信息
-                    images_str = doc.metadata.get("images", "{}")
-                    try:
-                        images_dict = json.loads(images_str)
-                        for key, value in images_dict.items():
-                            path, page = value.split("|")
-                            source_info["images"][key] = {
-                                "path": path,
-                                "page": int(page),
-                            }
-                    except json.JSONDecodeError:
-                        print(f"解析圖片信息時出錯: {images_str}")
+            if sources:
+                # 根據查詢類型選擇提示詞
+                prompt = (
+                    self.product_qa_prompt
+                    if self.is_product_query(query)
+                    else self.qa_prompt
+                )
+                prompt_text = prompt.format(context=context, question=query)
 
-                    sources.append(source_info)
+                # 使用 ChatModel 生成回答
+                response = self.llm.invoke(prompt_text)
+                answer = (
+                    response.content if hasattr(response, "content") else str(response)
+                )
 
-                # 如果是產品列表查詢，使用特殊的處理邏輯
-                if self.is_product_list_query(query):
-                    context = "\n".join([doc.page_content for doc in docs])
-                    answer = self.generate_product_response(context, query)
-                else:
-                    # 一般查詢的處理邏輯
-                    context = "\n".join(
-                        [
-                            f"文件：{doc.metadata.get('source', '未知來源')}\n"
-                            f"內容：{doc.page_content}\n"
-                            for doc in docs
-                        ]
-                    )
-
-                    # 使用提示模板生成回答
-                    prompt = self.qa_prompt.format(context=context, question=query)
-
-                    answer = self.llm.invoke(prompt).content
+                # 按相關度排序來源
+                sources = sorted(sources, key=lambda x: x.get("score", 0), reverse=True)
 
                 return {"answer": answer, "sources": sources}
             else:
                 return {
-                    "answer": "抱歉，知識庫尚未初始化，無法處理您的問題。",
+                    "answer": "抱歉，我在知識庫中找不到相關信息。請嘗試換個方式提問，或確認問題是否在知識庫範圍內。",
                     "sources": [],
                 }
 
         except Exception as e:
             print(f"處理查詢時出錯: {str(e)}")
-            traceback_str = traceback.format_exc()
+            traceback_str = __import__("traceback").format_exc()
             print(f"詳細錯誤信息: {traceback_str}")
             return {
                 "answer": "處理您的問題時發生了技術問題，請稍後再試。",

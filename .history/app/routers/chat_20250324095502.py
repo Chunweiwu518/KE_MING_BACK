@@ -13,14 +13,9 @@ router = APIRouter(prefix="/api", tags=["chat"])
 rag_engine = RAGEngine()
 
 
-class HistoryMessage(BaseModel):
-    role: str
-    content: str
-
-
 class ChatRequest(BaseModel):
     query: str
-    history: Optional[List[HistoryMessage]] = []
+    history: Optional[List[Dict[str, str]]] = []
 
 
 class ChatResponse(BaseModel):
@@ -103,22 +98,14 @@ async def stream_chat(request: ChatRequest):
         if not query:
             raise HTTPException(status_code=400, detail="查詢不能為空")
 
-        # 格式化歷史記錄
-        formatted_history = (
-            [{"role": msg.role, "content": msg.content} for msg in history]
-            if history
-            else []
-        )
-
         # 增加診斷日誌
         print(f"接收到流式查詢: {query}")
-        print(f"歷史記錄數量: {len(formatted_history)}")
 
         # 定義異步生成器函數來逐字輸出回應
         async def generate_response():
             try:
                 # 獲取完整回應
-                response = rag_engine.process_query(query, formatted_history)
+                response = rag_engine.process_query(query, history)
                 answer = response.get("answer", "")
                 sources = response.get("sources", [])
 

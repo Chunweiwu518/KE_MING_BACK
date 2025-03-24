@@ -13,14 +13,9 @@ router = APIRouter(prefix="/api", tags=["chat"])
 rag_engine = RAGEngine()
 
 
-class HistoryMessage(BaseModel):
-    role: str
-    content: str
-
-
 class ChatRequest(BaseModel):
     query: str
-    history: Optional[List[HistoryMessage]] = []
+    history: Optional[List[Dict[str, str]]] = []
 
 
 class ChatResponse(BaseModel):
@@ -103,22 +98,14 @@ async def stream_chat(request: ChatRequest):
         if not query:
             raise HTTPException(status_code=400, detail="查詢不能為空")
 
-        # 格式化歷史記錄
-        formatted_history = (
-            [{"role": msg.role, "content": msg.content} for msg in history]
-            if history
-            else []
-        )
-
         # 增加診斷日誌
         print(f"接收到流式查詢: {query}")
-        print(f"歷史記錄數量: {len(formatted_history)}")
 
         # 定義異步生成器函數來逐字輸出回應
         async def generate_response():
             try:
                 # 獲取完整回應
-                response = rag_engine.process_query(query, formatted_history)
+                response = rag_engine.process_query(query, history)
                 answer = response.get("answer", "")
                 sources = response.get("sources", [])
 
@@ -132,29 +119,21 @@ async def stream_chat(request: ChatRequest):
                     await asyncio.sleep(0.02)
 
                 # 發送來源信息
-                formatted_sources = []
-                for source in sources:
-                    if isinstance(source, dict):
-                        formatted_source = {
+                if sources:
+                    import json
+
+                    # 確保來源數據被正確格式化
+                    formatted_sources = [
+                        {
                             "content": source.get("content", ""),
                             "metadata": {
                                 "source": source.get("source", "未知來源"),
                                 "page": source.get("page", None),
                             },
                         }
-                        formatted_sources.append(formatted_source)
-                    else:
-                        # 如果 source 不是字典，嘗試將其轉換為所需格式
-                        formatted_source = {
-                            "content": str(source),
-                            "metadata": {"source": "未知來源", "page": None},
-                        }
-                        formatted_sources.append(formatted_source)
-
-                if formatted_sources:
-                    import json
-
-                    yield f"data: [SOURCES]{json.dumps(formatted_sources, ensure_ascii=False)}[/SOURCES]\n\n"
+                        for source in sources
+                    ]
+                    yield f"data: [SOURCES]{json.dumps(formatted_sources)}[/SOURCES]\n\n"
 
                 # 發送結束標記
                 yield "data: [DONE]\n\n"

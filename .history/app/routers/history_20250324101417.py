@@ -217,9 +217,9 @@ async def update_chat_history(chat_id: str, request: CreateHistoryRequest):
 
 
 @router.delete("/history/{chat_id}")
-async def delete_chat(chat_id: str):
+async def delete_chat_history(chat_id: str):
+    """刪除特定對話"""
     try:
-        # 刪除指定的對話
         conn = get_db()
         c = conn.cursor()
         c.execute("DELETE FROM chat_histories WHERE id = ?", (chat_id,))
@@ -228,20 +228,35 @@ async def delete_chat(chat_id: str):
             raise HTTPException(status_code=404, detail="找不到指定的對話記錄")
         conn.commit()
         conn.close()
-        return {"message": "對話已刪除"}
+        return {"status": "success", "message": "對話記錄已刪除"}
+    except HTTPException as he:
+        raise he
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"刪除對話失敗: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"刪除對話記錄失敗: {str(e)}")
 
 
-@router.delete("/history/all")
-async def delete_all_chats():
+@router.delete("/history/clear")
+async def clear_history():
+    """清空所有對話記錄"""
     try:
-        # 刪除所有對話
         conn = get_db()
         c = conn.cursor()
         c.execute("DELETE FROM chat_histories")
         conn.commit()
         conn.close()
-        return {"message": "所有對話已刪除"}
+        return {"status": "success", "message": "所有對話記錄已清空"}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"刪除所有對話失敗: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"清空對話記錄失敗: {str(e)}")
+
+
+@router.delete("/history/all")
+async def delete_all_histories():
+    try:
+        conn = get_db()
+        c = conn.cursor()
+        c.execute("DELETE FROM chat_histories")
+        conn.commit()
+        conn.close()
+        return {"message": "所有對話歷史已刪除"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"刪除所有對話歷史失敗: {str(e)}")

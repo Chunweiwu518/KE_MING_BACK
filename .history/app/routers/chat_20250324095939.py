@@ -13,14 +13,12 @@ router = APIRouter(prefix="/api", tags=["chat"])
 rag_engine = RAGEngine()
 
 
-class HistoryMessage(BaseModel):
-    role: str
-    content: str
-
-
 class ChatRequest(BaseModel):
     query: str
-    history: Optional[List[HistoryMessage]] = []
+    history: Optional[List[Dict[str, Any]]] = []
+
+    class Config:
+        arbitrary_types_allowed = True
 
 
 class ChatResponse(BaseModel):
@@ -94,6 +92,24 @@ def clean_text(text: str) -> str:
     return text
 
 
+def preprocess_history(history: List[Dict[str, Any]]) -> str:
+    """處理歷史記錄，生成上下文摘要"""
+    if not history:
+        return ""
+
+    # 將歷史對話組織成有意義的上下文
+    context_parts = []
+    for msg in history[-4:]:  # 只使用最近的2輪對話
+        role = msg.get("role", "")
+        content = msg.get("content", "")
+        if role == "user":
+            context_parts.append(f"問：{content}")
+        elif role == "assistant":
+            context_parts.append(f"答：{content}")
+
+    return "\n".join(context_parts)
+
+
 @router.post("/chat/stream")
 async def stream_chat(request: ChatRequest):
     try:
@@ -103,22 +119,16 @@ async def stream_chat(request: ChatRequest):
         if not query:
             raise HTTPException(status_code=400, detail="查詢不能為空")
 
-        # 格式化歷史記錄
-        formatted_history = (
-            [{"role": msg.role, "content": msg.content} for msg in history]
-            if history
-            else []
-        )
-
-        # 增加診斷日誌
-        print(f"接收到流式查詢: {query}")
-        print(f"歷史記錄數量: {len(formatted_history)}")
+        # 處理歷史記錄
+        context = preprocess_history(history)
 
         # 定義異步生成器函數來逐字輸出回應
         async def generate_response():
             try:
-                # 獲取完整回應
-                response = rag_engine.process_query(query, formatted_history)
+                # 獲取完整回應，傳入處理後的上下文
+                response = rag_engine.process_query(
+                    query=query, history=history, context=context
+                )
                 answer = response.get("answer", "")
                 sources = response.get("sources", [])
 
