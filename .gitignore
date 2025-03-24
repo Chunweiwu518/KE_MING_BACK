@@ -5,3 +5,5 @@
 
 # 依賴目錄
 node_modules/ 
+
+.history/
